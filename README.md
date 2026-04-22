@@ -28,11 +28,36 @@ Use this plugin's output for **optimization signal** (did caching improve? is th
 - `lib/pricing.py` — static rate card (update when Anthropic prices change)
 - `hooks/on_stop.py` — aggregation + output
 
-## Install (local dev)
+## Install (local marketplace)
 
-Hooks are registered via `.claude/settings.local.json` in this repo. When Claude Code is launched from this directory (or a subdir), the hooks fire automatically.
+이 repo 자체가 self-contained Claude Code marketplace입니다. Claude Code CLI에서 한 번만 등록하면 이후 어느 디렉터리에서 Claude Code를 실행해도 hook이 발화합니다.
 
-For permanent install, see Phase 2 (local marketplace packaging) — not yet shipped.
+```bash
+# 1. marketplace 등록 (repo를 clone 한 경로를 가리킨다)
+/plugin marketplace add /absolute/path/to/token-tracker
+
+# 2. plugin 활성화
+/plugin install token-tracker@token-tracker-local
+```
+
+활성화 후 Claude Code를 재시작하면 Stop hook이 응답마다 아래 같은 한 줄을 출력합니다:
+
+```
+비용 $0.0180 · 1,546 toks · cache 85% · 12.3s
+```
+
+비활성화: `/plugin disable token-tracker@token-tracker-local`
+제거: `/plugin uninstall token-tracker@token-tracker-local`
+
+### 개발 모드
+
+repo를 수정하면서 바로 반영하려면 symlink 방식을 쓸 수 있습니다:
+
+```bash
+ln -s /Users/you/Desktop/token-tracker ~/.claude/marketplaces/token-tracker-local
+```
+
+그 외 `.claude/settings.local.json`에 hook을 직접 등록하는 이전 방식은 더 이상 사용하지 않습니다.
 
 ## Tests
 
