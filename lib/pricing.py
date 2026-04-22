@@ -28,8 +28,24 @@ PRICING: dict[str, dict[str, float]] = {
 }
 
 
+def _resolve_rates(model: str) -> dict[str, float] | None:
+    """Look up pricing for a model id.
+
+    Claude Code often emits suffixed model ids like "claude-opus-4-7[1m]" or
+    "claude-opus-4-7-20260101". Exact match first; fall back to longest-prefix
+    match against known keys to handle these variants.
+    """
+    if model in PRICING:
+        return PRICING[model]
+    best: tuple[int, str] | None = None
+    for key in PRICING:
+        if model.startswith(key) and (best is None or len(key) > best[0]):
+            best = (len(key), key)
+    return PRICING[best[1]] if best else None
+
+
 def compute_cost(model: str, usage: TurnUsage) -> float:
-    rates = PRICING.get(model)
+    rates = _resolve_rates(model)
     if rates is None:
         return 0.0
     per_mtok = 1_000_000.0
@@ -42,4 +58,4 @@ def compute_cost(model: str, usage: TurnUsage) -> float:
 
 
 def is_known_model(model: str) -> bool:
-    return model in PRICING
+    return _resolve_rates(model) is not None

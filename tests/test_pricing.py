@@ -67,3 +67,56 @@ def test_haiku_known():
         cache_read_tokens=0,
     )
     assert pricing.compute_cost("claude-haiku-4-5", u) > 0.0
+
+
+def test_prefix_match_opus_with_context_suffix():
+    """Claude Code emits ids like 'claude-opus-4-7[1m]' — should fall back to prefix match."""
+    u = TurnUsage(
+        model="claude-opus-4-7[1m]",
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+    )
+    assert math.isclose(pricing.compute_cost("claude-opus-4-7[1m]", u), 15.0, rel_tol=1e-6)
+
+
+def test_prefix_match_sonnet_with_date_suffix():
+    """Date-suffixed ids like 'claude-sonnet-4-6-20260101' should also resolve."""
+    u = TurnUsage(
+        model="claude-sonnet-4-6-20260101",
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+    )
+    assert pricing.compute_cost("claude-sonnet-4-6-20260101", u) == 3.0
+
+
+def test_prefix_match_picks_longest_key():
+    """If multiple keys prefix-match, pick the longest (most specific)."""
+    from lib import pricing as p
+
+    p.PRICING["claude-opus-4-7-turbo"] = {
+        "input": 99.0,
+        "output": 99.0,
+        "cache_creation": 99.0,
+        "cache_read": 99.0,
+    }
+    try:
+        u = TurnUsage(
+            model="claude-opus-4-7-turbo-2026",
+            input_tokens=1_000_000,
+            output_tokens=0,
+            cache_creation_tokens=0,
+            cache_read_tokens=0,
+        )
+        # Both "claude-opus-4-7" and "claude-opus-4-7-turbo" match; longer wins.
+        assert math.isclose(p.compute_cost("claude-opus-4-7-turbo-2026", u), 99.0, rel_tol=1e-6)
+    finally:
+        del p.PRICING["claude-opus-4-7-turbo"]
+
+
+def test_is_known_model_accepts_prefix():
+    assert pricing.is_known_model("claude-opus-4-7[1m]") is True
+    assert pricing.is_known_model("claude-unknown-x") is False

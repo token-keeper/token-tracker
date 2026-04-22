@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import io
 import json
 import os
 import sys
@@ -83,12 +82,17 @@ def main() -> int:
         from lib.aggregator import aggregate
         from lib.formatter import format_summary
 
-        state = load_state(session_id) or {}
+        state = load_state(session_id)
+        has_state = state is not None
+        state = state or {}
         offset = int(state.get("offset", 0))
         started_at = float(state.get("started_at", time.time()))
 
         entries = _read_tail(transcript_path, offset)
         turns = [t for t in (parse_line(e) for e in entries) if t is not None]
+
+        if not has_state and not turns:
+            return 0
 
         elapsed = max(0.0, time.time() - started_at)
         summary = aggregate(turns, elapsed=elapsed)

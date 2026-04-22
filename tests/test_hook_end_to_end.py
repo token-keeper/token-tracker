@@ -51,8 +51,8 @@ def test_full_cycle_format(tmp_path):
     assert "cache" in msg
 
 
-def test_missing_state_still_succeeds(tmp_path):
-    """Stop with no prior state should still emit a valid systemMessage."""
+def test_missing_state_with_turns_emits(tmp_path):
+    """Stop with no prior state but readable turns should still emit."""
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     session_path = tmp_path / "session.jsonl"
@@ -72,6 +72,30 @@ def test_missing_state_still_succeeds(tmp_path):
     assert r.returncode == 0
     out = json.loads(r.stdout)
     assert out.get("continue") is True
+    assert "systemMessage" in out
+
+
+def test_missing_state_empty_transcript_stays_silent(tmp_path):
+    """Spurious Stop (no UserPromptSubmit beforehand) with no turns should produce no
+    systemMessage — avoids noisy "$0.0000 · 0 toks · cache 0%" output."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_text("", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    payload = {
+        "session_id": "silent",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "Stop",
+    }
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    assert r.stdout.strip() == "", f"Expected silent stdout, got: {r.stdout!r}"
 
 
 def test_realistic_cycle_counts_new_turns(tmp_path):
@@ -148,7 +172,9 @@ def test_error_path_emits_diagnostic(tmp_path):
     r = _run("on_stop.py", payload, env)
     # Hook must never propagate non-zero exit; should degrade gracefully.
     assert r.returncode == 0
-    # Output is either valid summary JSON (0 turns) or diagnostic JSON; must parse.
-    out = json.loads(r.stdout)
-    assert "systemMessage" in out
-    assert out.get("continue") is True
+    # When no state AND no turns are readable, the hook stays silent (no noisy
+    # "$0.00 · 0 toks" on spurious Stop events). Any non-empty stdout must still
+    # be valid JSON with continue=True.
+    if r.stdout.strip():
+        out = json.loads(r.stdout)
+        assert out.get("continue") is True
