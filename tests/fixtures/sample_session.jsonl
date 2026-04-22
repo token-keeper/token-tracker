@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":"hi"},"uuid":"u1","timestamp":"2026-04-22T10:00:00.000Z"}
+{"type":"assistant","message":{"id":"msg_1","role":"assistant","model":"claude-opus-4-7","content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"uuid":"a1","timestamp":"2026-04-22T10:00:01.000Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"ok"}]},"uuid":"tr1","timestamp":"2026-04-22T10:00:02.000Z"}
+{"type":"assistant","message":{"id":"msg_2","role":"assistant","model":"claude-opus-4-7","content":[{"type":"tool_use","id":"tu2","name":"Read","input":{}},{"type":"tool_use","id":"tu3","name":"Grep","input":{}}],"usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":500,"cache_read_input_tokens":2000}},"uuid":"a2","timestamp":"2026-04-22T10:00:05.000Z"}
