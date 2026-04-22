@@ -80,14 +80,16 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 
 ## 5. 확정된 다음 작업 후보 (우선순위 순)
 
-### A. 로컬 marketplace 패키징 (1–2h 예상) — **추천 1순위**
-현재 `.claude/settings.local.json` 직등록 방식은 디렉터리별로 scope되어 불편함. Claude Code의 정식 플러그인 등록 경로로 넘기기:
-- `~/.claude/marketplaces/token-tracker-local/`에 local marketplace 구조 생성
-- `extraKnownMarketplaces`에 등록
-- `enabledPlugins`에 `token-tracker@token-tracker-local` 토글
-- 정식 `/plugin` 명령으로 enable/disable 가능해짐
+> **다음 세션 권장**: B부터 시작 (`/token-detail` skill).
 
-**왜 1순위**: 어디서 Claude Code를 띄워도 동작해야 실사용 가능. 새 기능 개발 전에 배포 방식부터 안정화.
+### A. 로컬 marketplace 패키징 ✅ 완료 (2026-04-22)
+
+- `.claude-plugin/marketplace.json` 추가 (self-contained, `source: "."`).
+- `.claude-plugin/plugin.json`에 `hooks: "./hooks/hooks.json"` 필드 명시.
+- `/plugin marketplace add <repo>` + `/plugin install token-tracker@token-tracker-local`로 설치.
+- 기존 `.claude/settings.local.json` 제거됨 — repo 밖에서 Claude Code를 띄워도 hook 발화.
+- 관련 테스트: `tests/test_marketplace_manifest.py` (5건).
+- 관련 plan: `docs/superpowers/plans/2026-04-22-token-tracker-local-marketplace.md`.
 
 ### B. Phase 2: `/token-detail` skill (3–4h 예상)
 spec 섹션 3 참고. 직전 request의 turn별 상세 표를 출력.
