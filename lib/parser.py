@@ -12,6 +12,7 @@ class TurnUsage:
     cache_read_tokens: int
     tools_used: list[str] = field(default_factory=list)
     timestamp_iso: str = ""
+    message_id: str = ""
 
 
 def parse_line(entry: dict) -> TurnUsage | None:
@@ -41,4 +42,5 @@ def parse_line(entry: dict) -> TurnUsage | None:
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         tools_used=tools,
         timestamp_iso=entry.get("timestamp", ""),
+        message_id=str(msg.get("id", "")),
     )

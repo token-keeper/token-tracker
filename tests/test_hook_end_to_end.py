@@ -145,9 +145,13 @@ def test_realistic_cycle_counts_new_turns(tmp_path):
 
     msg = out["systemMessage"]
     # Aggregation sanity: 2 assistant turns with usage should not produce "0 toks".
-    assert "0 toks" not in msg, f"Expected non-zero tokens, got: {msg!r}"
-    # Cache hit rate in fixture is 2000 / (10 + 100 + 2000) = ~95%
-    assert "cache 95%" in msg, f"Expected cache 95%, got: {msg!r}"
+    import re
+    m = re.search(r"([\d,]+) toks", msg)
+    assert m, f"expected 'N toks' in output, got: {msg!r}"
+    assert int(m.group(1).replace(",", "")) > 0
+    # Cache hit rate = cache_read / (input + cache_creation + cache_read)
+    # Fixture totals: in=10+100=110, cc=0+500=500, cr=0+2000=2000 → 2000/2610 ≈ 77%
+    assert "cache 77%" in msg, f"Expected cache 77%, got: {msg!r}"
 
 
 def test_stop_polls_for_delayed_flush(tmp_path):
