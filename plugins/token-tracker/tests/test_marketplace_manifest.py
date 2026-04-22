@@ -35,9 +35,10 @@ def test_marketplace_plugin_version_matches_plugin_json():
     )
 
 
-def test_plugin_manifest_declares_hooks_path():
+def test_plugin_manifest_does_not_redeclare_default_hooks():
     data = json.loads(PLUGIN_MANIFEST.read_text())
-    assert data.get("hooks") == "./hooks/hooks.json", (
-        "plugin.json이 hooks 파일 경로를 명시해야 Claude Code가 확실히 로드한다"
+    assert "hooks" not in data, (
+        "Claude Code가 hooks/hooks.json을 자동 로드하므로 plugin.json에 "
+        "'hooks': './hooks/hooks.json'을 중복 선언하면 duplicate hooks file 에러가 난다"
     )
     assert HOOKS_JSON.is_file(), f"hooks.json missing at {HOOKS_JSON}"
