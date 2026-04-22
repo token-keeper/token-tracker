@@ -2,10 +2,11 @@ import json
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = PLUGIN_ROOT.parent.parent
 MANIFEST = REPO_ROOT / ".claude-plugin" / "marketplace.json"
-PLUGIN_MANIFEST = REPO_ROOT / ".claude-plugin" / "plugin.json"
-HOOKS_JSON = REPO_ROOT / "hooks" / "hooks.json"
+PLUGIN_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+HOOKS_JSON = PLUGIN_ROOT / "hooks" / "hooks.json"
 
 
 def test_marketplace_manifest_exists():
@@ -19,11 +20,11 @@ def test_marketplace_manifest_has_required_fields():
     assert isinstance(data["plugins"], list) and len(data["plugins"]) == 1
 
 
-def test_marketplace_plugin_entry_points_to_self():
+def test_marketplace_plugin_entry_points_to_plugin_dir():
     data = json.loads(MANIFEST.read_text())
     entry = data["plugins"][0]
     assert entry["name"] == "token-tracker"
-    assert entry["source"] == "."
+    assert entry["source"] == "./plugins/token-tracker"
 
 
 def test_marketplace_plugin_version_matches_plugin_json():
