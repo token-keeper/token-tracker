@@ -88,8 +88,17 @@ def main() -> int:
         offset = int(state.get("offset", 0))
         started_at = float(state.get("started_at", time.time()))
 
+        # Claude Code sometimes fires Stop before the assistant line has been
+        # flushed to the JSONL. Poll up to 500ms when the initial read yields
+        # no assistant turns — total ≤500ms added to Stop latency worst-case.
         entries = _read_tail(transcript_path, offset)
         turns = [t for t in (parse_line(e) for e in entries) if t is not None]
+        retries = 0
+        while has_state and not turns and retries < 5:
+            time.sleep(0.1)
+            entries = _read_tail(transcript_path, offset)
+            turns = [t for t in (parse_line(e) for e in entries) if t is not None]
+            retries += 1
 
         if not has_state and not turns:
             return 0

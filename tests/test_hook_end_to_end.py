@@ -150,6 +150,63 @@ def test_realistic_cycle_counts_new_turns(tmp_path):
     assert "cache 95%" in msg, f"Expected cache 95%, got: {msg!r}"
 
 
+def test_stop_polls_for_delayed_flush(tmp_path):
+    """If the JSONL has grown past our offset but the new content is only
+    non-assistant lines initially, the hook should retry once more content
+    arrives. Simulate by starting a background writer that appends the
+    assistant line after a short delay."""
+    import threading
+    import time as _time
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    all_lines = FIXTURE.read_text().splitlines()
+    # Start: user + a non-assistant line (attachment-like) already present.
+    prefix = all_lines[0] + "\n" + all_lines[2] + "\n"  # user + tool_result
+    # After delay: append an assistant line with usage.
+    assistant_line = all_lines[3] + "\n"
+
+    session_path.write_text(prefix, encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    # Record offset *inside* the prefix (before the assistant arrives).
+    payload = {
+        "session_id": "poll",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    _run("on_user_prompt.py", payload, env)
+
+    def _delayed_append():
+        _time.sleep(0.15)
+        with session_path.open("a", encoding="utf-8") as f:
+            f.write(assistant_line)
+
+    t = threading.Thread(target=_delayed_append)
+    t.start()
+    try:
+        payload["hook_event_name"] = "Stop"
+        r = _run("on_stop.py", payload, env)
+    finally:
+        t.join()
+
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+    # Extract the "N toks" number; must be > 0 (polling caught the late assistant line).
+    import re
+    m = re.search(r"([\d,]+) toks", msg)
+    assert m, f"expected 'N toks' in output, got: {msg!r}"
+    toks = int(m.group(1).replace(",", ""))
+    assert toks > 0, f"polling should have caught the delayed assistant line, got {toks} toks in: {msg!r}"
+
+
 def test_error_path_emits_diagnostic(tmp_path):
     """An exception inside the hook should still produce a systemMessage and exit 0."""
     fake_home = tmp_path / "home"
