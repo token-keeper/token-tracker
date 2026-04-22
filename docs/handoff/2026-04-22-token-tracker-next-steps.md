@@ -84,12 +84,14 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 
 ### A. 로컬 marketplace 패키징 ✅ 완료 (2026-04-22)
 
-- `.claude-plugin/marketplace.json` 추가 (self-contained, `source: "."`).
-- `.claude-plugin/plugin.json`에 `hooks: "./hooks/hooks.json"` 필드 명시.
-- `/plugin marketplace add <repo>` + `/plugin install token-tracker@token-tracker-local`로 설치.
+- 표준 marketplace 레이아웃으로 파일 재배치: `hooks/`, `lib/`, `tests/`, `config.json`, `.claude-plugin/plugin.json`을 모두 `plugins/token-tracker/` 하위로 이동. 루트 `.claude-plugin/marketplace.json`은 유지.
+- `marketplace.json`의 `source`는 `"./plugins/token-tracker"` (Claude Code가 `source: "."` 자기참조는 schema 거부).
+- `plugin.json`에 `hooks` 필드는 **선언하지 않음** — Claude Code가 `hooks/hooks.json`을 convention으로 자동 로드. 명시하면 "Duplicate hooks file" 에러.
+- 설치: `/plugin marketplace add <repo>` + `/plugin install token-tracker@token-tracker-local` + `/reload-plugins`.
 - 기존 `.claude/settings.local.json` 제거됨 — repo 밖에서 Claude Code를 띄워도 hook 발화.
-- 관련 테스트: `tests/test_marketplace_manifest.py` (5건).
+- 관련 테스트: `plugins/token-tracker/tests/test_marketplace_manifest.py` (5건).
 - 관련 plan: `docs/superpowers/plans/2026-04-22-token-tracker-local-marketplace.md`.
+- 커밋 히스토리: `8dcb7f6` (초기 manifest) → `7857721` (파일 이동) → `3eb8e79` (hooks 중복 제거).
 
 ### B. Phase 2: `/token-detail` skill (3–4h 예상)
 spec 섹션 3 참고. 직전 request의 turn별 상세 표를 출력.
@@ -137,10 +139,13 @@ spec 섹션 3 참고. 직전 request의 turn별 상세 표를 출력.
 
 | 항목 | 값 |
 |---|---|
-| 플러그인 repo | `/Users/i_brody/Desktop/harness/token-tracker/` |
-| 로컬 hook 설정 | `token-tracker/.claude/settings.local.json` (gitignored) |
+| 플러그인 repo | `/Users/brody/Desktop/token-tracker/` |
+| marketplace manifest | `.claude-plugin/marketplace.json` (repo 루트) |
+| plugin 디렉터리 | `plugins/token-tracker/` (plugin.json, hooks/, lib/, tests/, config.json) |
+| Claude Code 설치 경로 | `~/.claude/plugins/cache/token-tracker-local/token-tracker/0.1.0/` |
 | state 디렉터리 | `~/.claude/plugins/token-tracker/state/` |
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
 | 최신 태그 | `v0.1.0-mvp` (779c7c0..82acff9) |
-| 태그 후 커밋 | `fc2869b` (flush polling), `8d0eaba` (README), `8ea96a9` (dedupe + cc display), 기타 2건 chore |
-| 테스트 수 | 41 passing |
+| 태그 후 커밋 | `fc2869b` (flush polling), `8d0eaba` (README), `8ea96a9` (dedupe + cc display), `8dcb7f6`/`7857721`/`3eb8e79` (marketplace 패키징 3건), 기타 문서 |
+| 테스트 수 | 46 passing |
+| 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |
