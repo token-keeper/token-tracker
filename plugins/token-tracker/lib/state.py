@@ -8,12 +8,18 @@ from pathlib import Path
 from lib import paths
 
 
-def _state_path(session_id: str) -> Path:
-    return paths.state_dir() / f"{session_id}.json"
+def _session_dir(session_id: str) -> Path:
+    d = paths.state_dir() / session_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _offset_path(session_id: str) -> Path:
+    return _session_dir(session_id) / "offset.json"
 
 
 def save_state(session_id: str, data: dict) -> None:
-    target = _state_path(session_id)
+    target = _offset_path(session_id)
     fd, tmp = tempfile.mkstemp(
         prefix=".tmp-", suffix=".json", dir=str(target.parent)
     )
@@ -28,7 +34,7 @@ def save_state(session_id: str, data: dict) -> None:
 
 
 def load_state(session_id: str) -> dict | None:
-    target = _state_path(session_id)
+    target = _offset_path(session_id)
     if not target.exists():
         return None
     try:
