@@ -74,3 +74,50 @@ def test_parse_assistant_line_exposes_timestamp():
 def test_parse_malformed_line_returns_none():
     assert parser.parse_line({"type": "assistant"}) is None
     assert parser.parse_line({}) is None
+
+
+def test_parse_sets_started_at_from_iso_timestamp():
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-04-23T10:00:00Z",
+        "message": {
+            "id": "m1", "model": "claude-opus-4-7",
+            "usage": {"input_tokens": 1, "output_tokens": 1,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            "content": [],
+        },
+    }
+    t = parser.parse_line(entry)
+    # 2026-04-23T10:00:00Z = 2026-04-23 10:00:00 UTC
+    from datetime import datetime, timezone
+    expected = datetime(2026, 4, 23, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+    assert t.started_at == expected
+
+
+def test_parse_missing_timestamp_leaves_started_at_none():
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "m1", "model": "claude-opus-4-7",
+            "usage": {"input_tokens": 1, "output_tokens": 1,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            "content": [],
+        },
+    }
+    t = parser.parse_line(entry)
+    assert t.started_at is None
+
+
+def test_parse_invalid_timestamp_leaves_started_at_none():
+    entry = {
+        "type": "assistant",
+        "timestamp": "not-a-date",
+        "message": {
+            "id": "m1", "model": "claude-opus-4-7",
+            "usage": {"input_tokens": 1, "output_tokens": 1,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            "content": [],
+        },
+    }
+    t = parser.parse_line(entry)
+    assert t.started_at is None

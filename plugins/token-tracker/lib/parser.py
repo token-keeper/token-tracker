@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 @dataclass
@@ -15,6 +16,17 @@ class TurnUsage:
     timestamp_iso: str = ""
     message_id: str = ""
     index: int = 0  # set by aggregator
+    started_at: float | None = None  # derived from timestamp_iso (epoch seconds)
+    ended_at: float | None = None  # reserved; currently always None from JSONL
+
+
+def _iso_to_epoch(iso: str) -> float | None:
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
 
 
 def parse_line(entry: dict) -> TurnUsage | None:
@@ -41,6 +53,8 @@ def parse_line(entry: dict) -> TurnUsage | None:
         for name, count in counter.items()
     ]
 
+    timestamp_iso = entry.get("timestamp", "")
+
     return TurnUsage(
         model=msg.get("model", ""),
         input_tokens=int(usage.get("input_tokens", 0)),
@@ -48,6 +62,7 @@ def parse_line(entry: dict) -> TurnUsage | None:
         cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         tools_used=tools_used,
-        timestamp_iso=entry.get("timestamp", ""),
+        timestamp_iso=timestamp_iso,
         message_id=str(msg.get("id", "")),
+        started_at=_iso_to_epoch(timestamp_iso),
     )
