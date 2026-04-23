@@ -18,9 +18,8 @@ def _setup_sys_path() -> Path:
     return root
 
 
-def _parse_arg(argv: list[str]) -> str | None:
+def _parse_arg(raw: str) -> str:
     """Return 'on' / 'off' / '' (status query) / 'unknown'."""
-    raw = argv[1] if len(argv) > 1 else ""
     val = raw.strip().lower()
     if val == "":
         return ""
@@ -39,7 +38,7 @@ def _log_error(msg: str) -> None:
         print(msg, file=sys.stderr)
 
 
-def main(argv: list[str]) -> int:
+def main() -> int:
     plugin_root = _setup_sys_path()
 
     try:
@@ -50,7 +49,7 @@ def main(argv: list[str]) -> int:
         lang = get_language(cfg)
         strings = load_strings(lang)
 
-        arg = _parse_arg(argv)
+        arg = _parse_arg(os.environ.get("TOKEN_TRACKER_VERBOSE_ARG", ""))
 
         if arg == "unknown":
             print(strings["verbose_usage"])
@@ -90,4 +89,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(main())

@@ -5,7 +5,7 @@ disable-model-invocation: true
 ---
 
 <script-output>
-!`python3 ${CLAUDE_SKILL_DIR}/scripts/verbose_toggle.py "$ARGUMENTS"`
+!`TOKEN_TRACKER_VERBOSE_ARG="$ARGUMENTS" python3 ${CLAUDE_SKILL_DIR}/scripts/verbose_toggle.py`
 </script-output>
 
 **필수 규칙 — 반드시 준수:**
