@@ -15,6 +15,30 @@ After every assistant response, a one-line summary appears below it:
 - **cache**: `cache_read / total_input` hit rate.
 - **s**: wall-clock seconds from `UserPromptSubmit` to `Stop`.
 
+## Detail view: `/token-detail`
+
+직전 request의 **turn별** 토큰·비용·툴 사용 내역을 표로 보고 싶다면:
+
+```
+/token-detail
+```
+
+출력 예시:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 직전 request 상세
+ 총 비용 $0.0180 | 1,546 toks | cache 85% | 12.3s
+
+   #  모델                    툴                 input    cc       cr    output     비용      시간
+   1  opus-4-7[1m]            Read×3,Edit×1      120     400      800       450    $0.008     2.1s
+   2  opus-4-7[1m]            —                   95       0    1,200       320    $0.006     3.5s
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 범례: cc=cache_creation, cr=cache_read
+```
+
+skill은 `disable-model-invocation: true`로 등록돼 있어 Claude가 자동으로 호출하지 않고, 사용자가 `/token-detail`을 직접 입력해야만 실행됩니다. 스크립트 실행 + minimal SKILL.md 본문이라 토큰 소비는 수백 수준.
+
 ## Cost is "retail" — it will not match the statusline
 
 Claude Code's statusline `[💰 $X.XXX]` shows its **internal session-cumulative** cost tracker, which may reflect team/enterprise plan discounts or different cache-creation accounting. This plugin computes cost from Anthropic's **public pay-per-token rate card** (values hardcoded in `lib/pricing.py`).
@@ -23,10 +47,12 @@ Use this plugin's output for **optimization signal** (did caching improve? is th
 
 ## Files of interest
 
-- `docs/superpowers/specs/2026-04-22-token-tracker-plugin-design.md` — design spec
-- `docs/superpowers/plans/2026-04-22-token-tracker-phase1-mvp.md` — implementation plan
-- `lib/pricing.py` — static rate card (update when Anthropic prices change)
-- `hooks/on_stop.py` — aggregation + output
+- `docs/superpowers/specs/` — design specs (Phase 1 overall + Phase 2-B `/token-detail`)
+- `docs/superpowers/plans/` — implementation plans per phase
+- `docs/handoff/` — cross-session handoff notes
+- `plugins/token-tracker/lib/pricing.py` — static rate card (update when Anthropic prices change)
+- `plugins/token-tracker/hooks/on_stop.py` — aggregation + output
+- `plugins/token-tracker/lib/i18n/` — translated strings for ko/en
 
 ## Install (local marketplace)
 
@@ -61,8 +87,10 @@ ln -s /Users/you/Desktop/token-tracker ~/.claude/marketplaces/token-tracker-loca
 
 ## Tests
 
+repo 루트에서:
+
 ```bash
-pytest -v
+./venv/bin/pytest plugins/token-tracker/tests -q
 ```
 
-38 tests across unit + e2e. Uses Python 3.10+ stdlib only.
+80 tests across unit + integration + e2e (hook subprocess, skill script subprocess). Python 3.10+ stdlib only, pytest as the only dev dependency.

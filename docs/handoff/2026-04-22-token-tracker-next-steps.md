@@ -80,7 +80,7 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 
 ## 5. 확정된 다음 작업 후보 (우선순위 순)
 
-> **다음 세션 권장**: B부터 시작 (`/token-detail` skill).
+> **다음 세션 권장**: C (`/token-history` + `/token-verbose`) 또는 D (가격표 정확도).
 
 ### A. 로컬 marketplace 패키징 ✅ 완료 (2026-04-22)
 
@@ -93,14 +93,18 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 - 관련 plan: `docs/superpowers/plans/2026-04-22-token-tracker-local-marketplace.md`.
 - 커밋 히스토리: `8dcb7f6` (초기 manifest) → `7857721` (파일 이동) → `3eb8e79` (hooks 중복 제거).
 
-### B. Phase 2: `/token-detail` skill (3–4h 예상)
-spec 섹션 3 참고. 직전 request의 turn별 상세 표를 출력.
-- 각 turn: 순서, 모델, 사용 툴 목록, 토큰 breakdown, turn별 비용, turn별 소요시간
-- skill 디렉터리: `token-tracker/skills/token-detail/`
-- `disable-model-invocation: true`로 토큰 절약
-- 데이터 소스: 이미 `aggregator.Summary.turns[]`에 turn별 정보 있음 → formatter에 detail 변형 추가하면 됨
+### B. `/token-detail` skill ✅ 완료 (2026-04-23)
 
-**사용자가 명시적으로 요청한 기능**: "상세보기는 최대한 디테일하게, 차례대로 보고싶어. 그리고 각 turn에서 걸린 소요된 시간도 보고싶어."
+- `plugins/token-tracker/skills/token-detail/` 추가 (`SKILL.md` + `scripts/detail.py`).
+- Stop hook이 flush polling 완료 후 `state/{session}/last_summary.json`에 Summary 저장.
+- `detail_formatter`가 COLUMNS 리스트 + `lib/i18n/{ko,en}.json` 리소스로 표 렌더링.
+- `tools_used`를 `[{name, count}]` 구조로 확장. `TurnUsage.index` 필드 추가.
+- SKILL.md는 `!`cmd`` 한 줄로 스크립트 실행 → stdout이 본문에 삽입 → LLM이 그대로 전달.
+- `${CLAUDE_SESSION_ID}` 공식 env variable을 argv로 받아 session 스코프 확정.
+- schema_version=1, 미지원 시 `None` 반환 + stderr 진단.
+- 관련 spec v2: `docs/superpowers/specs/2026-04-22-token-detail-skill-design.md`.
+- 관련 plan: `docs/superpowers/plans/2026-04-23-token-detail-skill.md`.
+- 신규 테스트 27건: i18n(4) + parser 업데이트(1) + aggregator(2) + state 재작성(5) + summary_store(7) + detail_formatter(12) + detail_script_e2e(5) + hook_e2e(2). 총 46 → 80.
 
 ### C. Phase 3: `/token-history` + `/token-verbose` skill (2–3h 예상)
 - `/token-history`: 현재 세션 내 모든 request 요약 리스트
@@ -145,7 +149,7 @@ spec 섹션 3 참고. 직전 request의 turn별 상세 표를 출력.
 | Claude Code 설치 경로 | `~/.claude/plugins/cache/token-tracker-local/token-tracker/0.1.0/` |
 | state 디렉터리 | `~/.claude/plugins/token-tracker/state/` |
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
-| 최신 태그 | `v0.1.0-mvp` (779c7c0..82acff9) |
-| 태그 후 커밋 | `fc2869b` (flush polling), `8d0eaba` (README), `8ea96a9` (dedupe + cc display), `8dcb7f6`/`7857721`/`3eb8e79` (marketplace 패키징 3건), 기타 문서 |
-| 테스트 수 | 46 passing |
+| 최신 태그 | `v0.3.0` (Phase 2-B `/token-detail` skill 완료) |
+| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`) |
+| 테스트 수 | 80 passing |
 | 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |
