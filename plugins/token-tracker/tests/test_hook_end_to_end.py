@@ -98,6 +98,74 @@ def test_missing_state_empty_transcript_stays_silent(tmp_path):
     assert r.stdout.strip() == "", f"Expected silent stdout, got: {r.stdout!r}"
 
 
+def test_last_summary_saved_after_stop(tmp_path):
+    """Stop hook must persist the aggregated Summary so /token-detail can read it."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    # Start with empty transcript — UserPromptSubmit records offset=0.
+    session_path.write_text("", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    session_id = "sess-persist"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    # Simulate the assistant response arriving: append fixture turns.
+    session_path.write_bytes(FIXTURE.read_bytes())
+
+    payload["hook_event_name"] = "Stop"
+    assert _run("on_stop.py", payload, env).returncode == 0
+
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert summary_file.is_file(), f"last_summary.json not saved at {summary_file}"
+    data = json.loads(summary_file.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
+    assert data["session_id"] == session_id
+    assert isinstance(data["summary"]["turns"], list)
+    assert len(data["summary"]["turns"]) >= 1
+
+
+def test_last_summary_not_saved_when_no_turns(tmp_path):
+    """If the hook produces zero turns (silent-skip path), do not persist an empty summary."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_text("", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    session_id = "sess-empty"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "Stop",
+    }
+    _run("on_stop.py", payload, env)
+
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert not summary_file.exists(), (
+        f"Unexpected last_summary.json at {summary_file}"
+    )
+
+
 def test_realistic_cycle_counts_new_turns(tmp_path):
     """Simulate production flow:
     1. session.jsonl has only a user line initially.

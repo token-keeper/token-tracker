@@ -106,6 +106,15 @@ def main() -> int:
         elapsed = max(0.0, time.time() - started_at)
         summary = aggregate(turns, elapsed=elapsed)
 
+        # Persist the just-computed Summary so /token-detail can read it.
+        # Only save when we actually produced turns (flush polling finished).
+        if summary.turns:
+            try:
+                from lib.summary_store import save_last_summary
+                save_last_summary(session_id, summary)
+            except Exception:
+                _log_error(f"[on_stop] save_last_summary: {traceback.format_exc()}")
+
         cfg = _load_config(plugin_root)
         lang = cfg.get("language", "en")
         msg = format_summary(summary, lang)
