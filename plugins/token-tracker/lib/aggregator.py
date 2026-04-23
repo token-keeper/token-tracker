@@ -35,6 +35,8 @@ def _dedupe_by_message_id(turns: list[TurnUsage]) -> list[TurnUsage]:
 
 def aggregate(turns: list[TurnUsage], elapsed: float) -> Summary:
     unique = _dedupe_by_message_id(turns)
+    for i, t in enumerate(unique):
+        t.index = i
     total_cost = sum(compute_cost(t.model, t) for t in unique)
     # Include cache_creation in the input-side total so displayed "toks" matches
     # what the cost number actually bills for (otherwise a big cache warmup

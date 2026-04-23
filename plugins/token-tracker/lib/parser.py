@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 
@@ -10,9 +11,10 @@ class TurnUsage:
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
-    tools_used: list[str] = field(default_factory=list)
+    tools_used: list[dict] = field(default_factory=list)  # [{"name": str, "count": int}]
     timestamp_iso: str = ""
     message_id: str = ""
+    index: int = 0  # set by aggregator
 
 
 def parse_line(entry: dict) -> TurnUsage | None:
@@ -28,10 +30,15 @@ def parse_line(entry: dict) -> TurnUsage | None:
         return None
 
     content = msg.get("content") or []
-    tools = [
+    raw_names = [
         blk.get("name", "")
         for blk in content
         if isinstance(blk, dict) and blk.get("type") == "tool_use"
+    ]
+    counter = Counter(name for name in raw_names if name)
+    tools_used = [
+        {"name": name, "count": count}
+        for name, count in counter.items()
     ]
 
     return TurnUsage(
@@ -40,7 +47,7 @@ def parse_line(entry: dict) -> TurnUsage | None:
         output_tokens=int(usage.get("output_tokens", 0)),
         cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
-        tools_used=tools,
+        tools_used=tools_used,
         timestamp_iso=entry.get("timestamp", ""),
         message_id=str(msg.get("id", "")),
     )

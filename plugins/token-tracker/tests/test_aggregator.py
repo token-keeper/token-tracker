@@ -93,3 +93,24 @@ def test_turns_without_message_id_are_preserved():
     s = aggregator.aggregate(ts, elapsed=0.0)
     assert s.total_input_tokens == 200
     assert len(s.turns) == 2
+
+
+def test_aggregate_assigns_sequential_index():
+    ts = [
+        _mk(input_tokens=1, output_tokens=1, message_id="a"),
+        _mk(input_tokens=1, output_tokens=1, message_id="b"),
+        _mk(input_tokens=1, output_tokens=1, message_id="c"),
+    ]
+    s = aggregator.aggregate(ts, elapsed=1.0)
+    assert [t.index for t in s.turns] == [0, 1, 2]
+
+
+def test_aggregate_index_after_dedupe():
+    dup = _mk(input_tokens=1, output_tokens=1, message_id="a")
+    ts = [
+        dup,
+        _mk(input_tokens=1, output_tokens=1, message_id="a"),  # duplicate message_id, deduped
+        _mk(input_tokens=1, output_tokens=1, message_id="b"),
+    ]
+    s = aggregator.aggregate(ts, elapsed=1.0)
+    assert [t.index for t in s.turns] == [0, 1]

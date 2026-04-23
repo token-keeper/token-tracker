@@ -36,8 +36,33 @@ def test_parse_simple_assistant_line():
 def test_parse_assistant_line_with_tool_uses():
     lines = _load_lines()
     t = parser.parse_line(lines[3])
-    assert t.tools_used == ["Read", "Grep"]
+    # fixture has one Read + one Grep, both count=1
+    assert t.tools_used == [{"name": "Read", "count": 1}, {"name": "Grep", "count": 1}]
     assert t.cache_read_tokens == 2000
+
+
+def test_parse_assistant_line_aggregates_tool_use_counts():
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-04-23T10:00:00Z",
+        "message": {
+            "id": "msg_1",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 10, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "content": [
+                {"type": "text", "text": "ok"},
+                {"type": "tool_use", "name": "Read"},
+                {"type": "tool_use", "name": "Read"},
+                {"type": "tool_use", "name": "Edit"},
+            ],
+        },
+    }
+    t = parser.parse_line(entry)
+    assert t is not None
+    assert t.tools_used == [{"name": "Read", "count": 2}, {"name": "Edit", "count": 1}]
 
 
 def test_parse_assistant_line_exposes_timestamp():
