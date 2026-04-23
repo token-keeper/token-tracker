@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import os
 import sys
 import traceback
@@ -17,25 +16,6 @@ def _setup_sys_path() -> Path:
         root = Path(__file__).resolve().parent.parent.parent.parent
     sys.path.insert(0, str(root))
     return root
-
-
-def _load_config(cfg_file: Path) -> dict:
-    if cfg_file.exists():
-        try:
-            return json.loads(cfg_file.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-
-def _write_config(cfg_file: Path, cfg: dict) -> None:
-    """Atomic write — write to a sibling tmp file then os.replace.
-    Guarantees the reader (on_stop hook) never sees a partial / truncated file.
-    """
-    payload = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
-    tmp = cfg_file.with_suffix(cfg_file.suffix + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, cfg_file)
 
 
 def _parse_arg(argv: list[str]) -> str | None:
@@ -61,13 +41,13 @@ def _log_error(msg: str) -> None:
 
 def main(argv: list[str]) -> int:
     plugin_root = _setup_sys_path()
-    cfg_file = plugin_root / "config.json"
 
     try:
+        from lib.config import load_config, update_config, get_language
         from lib.i18n_loader import load_strings
 
-        cfg = _load_config(cfg_file)
-        lang = cfg.get("language", "en")
+        cfg = load_config(plugin_root)
+        lang = get_language(cfg)
         strings = load_strings(lang)
 
         arg = _parse_arg(argv)
@@ -90,8 +70,7 @@ def main(argv: list[str]) -> int:
             print(strings["verbose_no_change"].format(state=current_label))
             return 0
 
-        cfg["verbose"] = new_value
-        _write_config(cfg_file, cfg)
+        update_config(plugin_root, {"verbose": new_value})
 
         new_label = on_label if new_value else off_label
         print(strings["verbose_changed"].format(
