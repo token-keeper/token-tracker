@@ -14,5 +14,12 @@
   "err_no_state": "No recorded request yet. Ask Claude first, then retry.",
   "err_parse": "Could not read detail (file corrupted).",
   "err_unsupported_schema": "State file is not compatible with current skill (delete; will regenerate on next response).",
-  "err_empty_turns": "The last request has no assistant response."
+  "err_empty_turns": "The last request has no assistant response.",
+  "verbose_on": "on",
+  "verbose_off": "off",
+  "verbose_status": "token-tracker verbose: {state}",
+  "verbose_changed": "token-tracker verbose: {from_state} → {to_state}",
+  "verbose_no_change": "token-tracker verbose: {state} (no change)",
+  "verbose_usage": "usage: /token-verbose [on|off]  (no arg shows current state)",
+  "verbose_error": "verbose toggle failed. See ~/.claude/plugins/token-tracker/log/error.log."
 }
