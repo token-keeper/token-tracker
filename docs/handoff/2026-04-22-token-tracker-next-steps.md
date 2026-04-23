@@ -6,7 +6,7 @@
 
 ## 1. 한 줄 요약
 
-token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.4.0** — Phase 1 MVP + Phase 2-A (로컬 marketplace 패키징) + Phase 2-B (`/token-detail` slash skill + verbose 모드) 완료. 85 tests passing. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력 (결정론적, LLM 우회), 또는 `/token-detail` slash로 주문형 조회(LLM 경유, 가끔 불안정).
+token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.5.0** — Phase 1 MVP + Phase 2-A (로컬 marketplace 패키징) + Phase 2-B (`/token-detail` slash skill + verbose 모드) + Phase 2-C의 일부 (`/token-verbose` toggle skill) 완료. 104 tests passing. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력(결정론적, LLM 우회), `/token-detail`로 주문형 조회, `/token-verbose [on|off]`로 verbose 토글 — 모두 slash로 수동 호출 전용(`disable-model-invocation: true`).
 
 ---
 
@@ -80,7 +80,7 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 
 ## 5. 확정된 다음 작업 후보 (우선순위 순)
 
-> **다음 세션 권장**: C (`/token-history` + `/token-verbose`) 또는 D (가격표 정확도).
+> **다음 세션 권장**: E (미처리 MAJOR 회수) 또는 C' (`/token-history`) 또는 D (가격표 정확도).
 
 ### A. 로컬 marketplace 패키징 ✅ 완료 (2026-04-22)
 
@@ -108,15 +108,48 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 - 관련 plan: `docs/superpowers/plans/2026-04-23-token-detail-skill.md`.
 - 신규 테스트 총 29건. 전체 46 → 85.
 
-### C. Phase 3: `/token-history` + `/token-verbose` skill (2–3h 예상)
-- `/token-history`: 현재 세션 내 모든 request 요약 리스트
-- `/token-verbose`: config.json의 `verbose: true` 토글 → 이후 Stop마다 자동으로 상세 출력
+### C. `/token-verbose` toggle skill ✅ 완료 (2026-04-24, v0.5.0)
+
+- `plugins/token-tracker/skills/token-verbose/` 추가 (`SKILL.md` + `scripts/verbose_toggle.py`).
+- `/token-verbose` (인자 없음) → 현재 상태, `/token-verbose on|off` → 전환, 이미 같은 상태면 "변경 없음" 안내.
+- alias 수용: `on/1/true/yes`, `off/0/false/no` — case-insensitive.
+- `_write_config`는 tmp 파일 → `os.replace()` 패턴으로 **원자적 쓰기** (Stop hook과 race 방어, 디스크풀 시 손상 방지).
+- `disable-model-invocation: true` + `$ARGUMENTS` 치환으로 사용자 수동 호출 전용.
+- `hooks/on_stop.py` env 판정 로직 수정: whitelist(`1/true/yes/on`, `0/false/no/off`) 외 값은 env 무시하고 config으로 폴백 (이전: whitelist 외면 조용히 off로 떨어짐).
+- 신규 테스트 20건 (`test_verbose_toggle_script.py` 12 + `test_verbose_integration.py` 8, 후자는 toggle→stop 연속 E2E + SKILL.md manifest 포함).
+- 커밋: `9d7c3a4` (hook fix) + `dc0dc74` (skill).
+
+### C'. Phase 3 잔여: `/token-history` skill (2~3h 예상)
+- 현재 세션 내 **모든 request**의 요약 리스트 (turn#·비용·토큰·cache%·시간).
+- `/token-detail`(직전 단건 상세)과 축이 다른 보완. 세션 중반에 누적 사용량 훑기용.
+- `last_summary.json` 대신 전체 세션 aggregate가 필요 → hook에서 매번 append하거나 skill이 JSONL을 처음부터 파싱.
+- 기존 i18n/formatter/aggregator 재활용 가능.
 
 ### D. 가격표 정확도 개선 / Team 플랜 대응 (조사 필요)
 현재 `lib/pricing.py`는 public retail 요금표 5m 캐시 tier 기준. 실제 사용자는 Claude Team 플랜이라 statusline의 내부 값과 2~3배 이상 차이남. 조사할 것:
 - Anthropic API가 응답 헤더에 실제 billing cost를 반환하는지
 - 1h cache tier 가격 반영 (`ephemeral_1h_input_tokens` 활용)
 - config에 "pricing_override" 필드로 사용자 할인율 주입
+
+### E. v0.5.0 코드리뷰 미처리 MAJOR (의도적 보류)
+
+v0.5.0 병렬 리뷰에서 나왔으나 YAGNI/범위 이유로 이번 PR에서 제외한 항목. 우선순위 낮지만 재발 전 정리 가치가 있음.
+
+**E-1. `lib/config.py` 추상화 (아키텍처 + 중복)**
+- 현재 `hooks/on_stop.py`, `skills/token-detail/scripts/detail.py`, `skills/token-verbose/scripts/verbose_toggle.py` 3곳이 각자 config.json을 read(-modify-write)한다.
+- 향후 `language` toggle 등 추가 시 last-writer-wins로 필드 유실 위험.
+- 수정: `lib/config.py`에 `load_config()` / `update_config(patch: dict)` + `is_verbose(cfg, env)` 헬퍼. 세 번째 skill 추가 시점에 같이 리팩토링 권장.
+
+**E-2. `$ARGUMENTS` command injection 검증**
+- `SKILL.md`의 `!`python3 ... "$ARGUMENTS"`` 패턴에서 `/token-verbose "$(rm -rf ~)"` 같은 입력 시 bash가 `$(...)`를 재해석하는지 **공식 문서에 명시 없음**.
+- Threat model은 self-typed 로컬 실수 수준이라 실사용 위험 낮음. 공식 보장이 없으므로 known limitation.
+- 수정 방향: `echo "$ARGUMENTS" | python3 .../verbose_toggle.py` 처럼 stdin으로 전달하거나, env var 경유(`TOKEN_VERBOSE_ARG="$ARGUMENTS" python3 ...`). 또는 Anthropic 공식 확인.
+
+**E-3. 쓰기 실패 시 UX**
+- `verbose_toggle.py`에서 `PermissionError` / 디스크풀 등 I/O 실패 시 `except` 로 잡아 exit 0 + 일반 "verbose_error" 메시지. 사용자는 반영 여부 불투명.
+- 수정: I/O 실패는 exit 1 + 원인 포함 i18n 메시지.
+
+**E-4. MINOR 여럿** — SKILL.md 공통 boilerplate(`_setup_sys_path`, `_log_error`)를 `lib/skill_runtime.py`로 추출, `_log_error`의 context manager 사용, config default 통일, alias 축소 등. 모두 선택적.
 
 ---
 
@@ -151,7 +184,7 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 | Claude Code 설치 경로 | `~/.claude/plugins/cache/token-tracker-local/token-tracker/0.1.0/` |
 | state 디렉터리 | `~/.claude/plugins/token-tracker/state/` |
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
-| 최신 태그 | `v0.4.0` (verbose 모드 + /token-detail 안정화) |
-| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose) |
-| 테스트 수 | 85 passing |
+| 최신 태그 | `v0.5.0` (`/token-verbose` toggle + atomic config write + env whitelist 폴백) |
+| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`) |
+| 테스트 수 | 104 passing |
 | 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |
