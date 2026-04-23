@@ -6,7 +6,7 @@
 
 ## 1. 한 줄 요약
 
-token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청(UserPromptSubmit → Stop) 한 건의 토큰·비용을 한 줄로 출력한다. **Phase 1 MVP 완료 + 실전 검증 + 3건의 버그 픽스 반영됨.** 현재 태그 `v0.1.0-mvp`, 이후 추가 수정 3개 커밋.
+token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.4.0** — Phase 1 MVP + Phase 2-A (로컬 marketplace 패키징) + Phase 2-B (`/token-detail` slash skill + verbose 모드) 완료. 85 tests passing. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력 (결정론적, LLM 우회), 또는 `/token-detail` slash로 주문형 조회(LLM 경유, 가끔 불안정).
 
 ---
 
