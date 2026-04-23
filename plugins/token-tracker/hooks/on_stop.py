@@ -119,9 +119,17 @@ def main() -> int:
         lang = cfg.get("language", "en")
         msg = format_summary(summary, lang)
 
-        # verbose: config 또는 env 중 하나라도 truthy면 turn별 상세 표를 덧붙인다.
-        # env는 config를 override해서 일회성 디버깅/테스트 격리 용도로도 쓸 수 있다.
-        verbose = bool(cfg.get("verbose", False)) or os.environ.get("TOKEN_TRACKER_VERBOSE") == "1"
+        # verbose: env가 whitelist 값이면 env가 config을 override. whitelist 외 값
+        # (빈 문자열, "invalid" 등)은 env 무시하고 config 사용 — 오타로 설정이 덮여
+        # 꺼지는 회귀 방지.
+        env_v = os.environ.get("TOKEN_TRACKER_VERBOSE")
+        env_norm = env_v.strip().lower() if env_v is not None else None
+        if env_norm in ("1", "true", "yes", "on"):
+            verbose = True
+        elif env_norm in ("0", "false", "no", "off"):
+            verbose = False
+        else:
+            verbose = bool(cfg.get("verbose", False))
         if verbose and summary.turns:
             from lib.detail_formatter import format_detail
             msg = msg + "\n" + format_detail(summary, lang)

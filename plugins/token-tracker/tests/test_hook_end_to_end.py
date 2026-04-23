@@ -183,7 +183,8 @@ def test_verbose_off_keeps_single_line_system_message(tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(fake_home)
     env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
-    env.pop("TOKEN_TRACKER_VERBOSE", None)  # ensure off
+    # env가 config을 override — 실제 repo의 config.json이 verbose:true여도 test는 격리.
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
 
     payload = {
         "session_id": "sess-quiet",
