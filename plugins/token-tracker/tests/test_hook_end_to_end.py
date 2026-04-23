@@ -137,6 +137,70 @@ def test_last_summary_saved_after_stop(tmp_path):
     assert len(data["summary"]["turns"]) >= 1
 
 
+def test_verbose_env_appends_detail_table_to_system_message(tmp_path):
+    """TOKEN_TRACKER_VERBOSE=1 이면 Stop hook이 한 줄 요약 + 상세 표를 함께 emit해야 한다."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_text("", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"
+
+    session_id = "sess-verbose"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    # Assistant response arrives
+    session_path.write_bytes(FIXTURE.read_bytes())
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+    # one-liner still present
+    assert "toks" in msg
+    # detail table markers present
+    assert "━" in msg
+    assert "cc=cache_creation" in msg
+
+
+def test_verbose_off_keeps_single_line_system_message(tmp_path):
+    """verbose가 꺼져 있으면 기존처럼 한 줄만 emit하고 표는 포함 안 된다."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_text("", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env.pop("TOKEN_TRACKER_VERBOSE", None)  # ensure off
+
+    payload = {
+        "session_id": "sess-quiet",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+    session_path.write_bytes(FIXTURE.read_bytes())
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+    assert "toks" in msg
+    assert "━" not in msg
+
+
 def test_last_summary_not_saved_when_no_turns(tmp_path):
     """If the hook produces zero turns (silent-skip path), do not persist an empty summary."""
     fake_home = tmp_path / "home"

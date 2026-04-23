@@ -102,9 +102,11 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 - SKILL.md는 `!`cmd`` 한 줄로 스크립트 실행 → stdout이 본문에 삽입 → LLM이 그대로 전달.
 - `${CLAUDE_SESSION_ID}` 공식 env variable을 argv로 받아 session 스코프 확정.
 - schema_version=1, 미지원 시 `None` 반환 + stderr 진단.
+- v0.3.1 hotfix: parser가 timestamp_iso를 `started_at` epoch float로 변환해 turn별 시간 계산 정상화 + SKILL.md 지시문 강화(`<script-output>` XML 태그).
+- v0.4.0: **verbose 모드 추가** — `config.json`의 `verbose: true` 또는 `TOKEN_TRACKER_VERBOSE=1` 환경변수로 매 Stop마다 자동 상세 표 출력. Hook이 직접 systemMessage에 덧붙여 LLM을 거치지 않아 **결정론적**. slash skill이 가끔 LLM 맥락에 끌려 표 대신 엉뚱한 응답을 내는 근본 한계를 우회.
 - 관련 spec v2: `docs/superpowers/specs/2026-04-22-token-detail-skill-design.md`.
 - 관련 plan: `docs/superpowers/plans/2026-04-23-token-detail-skill.md`.
-- 신규 테스트 27건: i18n(4) + parser 업데이트(1) + aggregator(2) + state 재작성(5) + summary_store(7) + detail_formatter(12) + detail_script_e2e(5) + hook_e2e(2). 총 46 → 80.
+- 신규 테스트 총 29건. 전체 46 → 85.
 
 ### C. Phase 3: `/token-history` + `/token-verbose` skill (2–3h 예상)
 - `/token-history`: 현재 세션 내 모든 request 요약 리스트
@@ -149,7 +151,7 @@ cd /Users/i_brody/Desktop/harness/token-tracker && pytest -q
 | Claude Code 설치 경로 | `~/.claude/plugins/cache/token-tracker-local/token-tracker/0.1.0/` |
 | state 디렉터리 | `~/.claude/plugins/token-tracker/state/` |
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
-| 최신 태그 | `v0.3.0` (Phase 2-B `/token-detail` skill 완료) |
-| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`) |
-| 테스트 수 | 80 passing |
+| 최신 태그 | `v0.4.0` (verbose 모드 + /token-detail 안정화) |
+| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose) |
+| 테스트 수 | 85 passing |
 | 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |

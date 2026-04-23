@@ -118,6 +118,14 @@ def main() -> int:
         cfg = _load_config(plugin_root)
         lang = cfg.get("language", "en")
         msg = format_summary(summary, lang)
+
+        # verbose: config 또는 env 중 하나라도 truthy면 turn별 상세 표를 덧붙인다.
+        # env는 config를 override해서 일회성 디버깅/테스트 격리 용도로도 쓸 수 있다.
+        verbose = bool(cfg.get("verbose", False)) or os.environ.get("TOKEN_TRACKER_VERBOSE") == "1"
+        if verbose and summary.turns:
+            from lib.detail_formatter import format_detail
+            msg = msg + "\n" + format_detail(summary, lang)
+
         _emit(msg)
     except Exception:
         _log_error(f"[on_stop] {traceback.format_exc()}")
