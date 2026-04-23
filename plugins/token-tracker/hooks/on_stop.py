@@ -19,16 +19,6 @@ def _setup_sys_path() -> Path:
     return root
 
 
-def _load_config(plugin_root: Path) -> dict:
-    cfg_file = plugin_root / "config.json"
-    if cfg_file.exists():
-        try:
-            return json.loads(cfg_file.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"language": "en", "verbose": False}
-
-
 def _emit(system_message: str) -> None:
     json.dump(
         {"systemMessage": system_message, "continue": True}, sys.stdout
@@ -115,22 +105,13 @@ def main() -> int:
             except Exception:
                 _log_error(f"[on_stop] save_last_summary: {traceback.format_exc()}")
 
-        cfg = _load_config(plugin_root)
-        lang = cfg.get("language", "en")
+        from lib.config import load_config, get_language, is_verbose
+
+        cfg = load_config(plugin_root)
+        lang = get_language(cfg)
         msg = format_summary(summary, lang)
 
-        # verbose: env가 whitelist 값이면 env가 config을 override. whitelist 외 값
-        # (빈 문자열, "invalid" 등)은 env 무시하고 config 사용 — 오타로 설정이 덮여
-        # 꺼지는 회귀 방지.
-        env_v = os.environ.get("TOKEN_TRACKER_VERBOSE")
-        env_norm = env_v.strip().lower() if env_v is not None else None
-        if env_norm in ("1", "true", "yes", "on"):
-            verbose = True
-        elif env_norm in ("0", "false", "no", "off"):
-            verbose = False
-        else:
-            verbose = bool(cfg.get("verbose", False))
-        if verbose and summary.turns:
+        if is_verbose(cfg, os.environ.get("TOKEN_TRACKER_VERBOSE")) and summary.turns:
             from lib.detail_formatter import format_detail
             msg = msg + "\n" + format_detail(summary, lang)
 

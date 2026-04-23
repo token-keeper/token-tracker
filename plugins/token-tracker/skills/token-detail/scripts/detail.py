@@ -19,16 +19,6 @@ def _setup_sys_path() -> Path:
     return root
 
 
-def _load_language(plugin_root: Path) -> str:
-    cfg = plugin_root / "config.json"
-    if cfg.exists():
-        try:
-            return json.loads(cfg.read_text(encoding="utf-8")).get("language", "en")
-        except Exception:
-            pass
-    return "en"
-
-
 def _log_error(msg: str) -> None:
     try:
         from lib.paths import log_dir
@@ -46,7 +36,8 @@ def main(argv: list[str]) -> int:
         from lib.summary_store import load_last_summary
         from lib.detail_formatter import format_detail
 
-        lang = _load_language(plugin_root)
+        from lib.config import load_config, get_language
+        lang = get_language(load_config(plugin_root))
         strings = load_strings(lang)
 
         if not session_id:
