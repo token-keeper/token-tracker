@@ -1,0 +1,18 @@
+{
+  "header_title": "직전 request 상세",
+  "header_total": "총 비용 {cost} | {tokens} toks | cache {rate} | {elapsed}",
+  "col_index": "#",
+  "col_model": "모델",
+  "col_tools": "툴",
+  "col_input": "input",
+  "col_cc": "cc",
+  "col_cr": "cr",
+  "col_output": "output",
+  "col_cost": "비용",
+  "col_time": "시간",
+  "legend": "범례: cc=cache_creation, cr=cache_read",
+  "err_no_state": "아직 기록된 request가 없습니다. 먼저 Claude에게 질문 후 다시 실행하세요.",
+  "err_parse": "상세 정보를 읽지 못했습니다 (파일 손상).",
+  "err_unsupported_schema": "이 state 파일은 현재 skill과 호환되지 않습니다 (삭제 후 다음 응답부터 재생성).",
+  "err_empty_turns": "직전 request에 assistant 응답이 없습니다."
+}

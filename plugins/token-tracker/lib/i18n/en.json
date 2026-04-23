@@ -1,0 +1,18 @@
+{
+  "header_title": "Last request detail",
+  "header_total": "total {cost} | {tokens} toks | cache {rate} | {elapsed}",
+  "col_index": "#",
+  "col_model": "model",
+  "col_tools": "tools",
+  "col_input": "input",
+  "col_cc": "cc",
+  "col_cr": "cr",
+  "col_output": "output",
+  "col_cost": "cost",
+  "col_time": "time",
+  "legend": "legend: cc=cache_creation, cr=cache_read",
+  "err_no_state": "No recorded request yet. Ask Claude first, then retry.",
+  "err_parse": "Could not read detail (file corrupted).",
+  "err_unsupported_schema": "State file is not compatible with current skill (delete; will regenerate on next response).",
+  "err_empty_turns": "The last request has no assistant response."
+}
