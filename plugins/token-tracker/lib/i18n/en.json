@@ -21,5 +21,6 @@
   "verbose_changed": "token-tracker verbose: {from_state} → {to_state}",
   "verbose_no_change": "token-tracker verbose: {state} (no change)",
   "verbose_usage": "usage: /token-verbose [on|off]  (no arg shows current state)",
-  "verbose_error": "verbose toggle failed. See ~/.claude/plugins/token-tracker/log/error.log."
+  "verbose_error": "verbose toggle failed. See ~/.claude/plugins/token-tracker/log/error.log.",
+  "verbose_error_io": "Failed to write config.json ({reason}). Check permissions / disk space."
 }
