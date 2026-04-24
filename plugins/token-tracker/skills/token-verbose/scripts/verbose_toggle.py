@@ -69,7 +69,12 @@ def main() -> int:
             print(strings["verbose_no_change"].format(state=current_label))
             return 0
 
-        update_config(plugin_root, {"verbose": new_value})
+        try:
+            update_config(plugin_root, {"verbose": new_value})
+        except OSError as e:
+            _log_error(f"[verbose_toggle.py] write failed: {e}")
+            print(strings["verbose_error_io"].format(reason=str(e)))
+            return 1
 
         new_label = on_label if new_value else off_label
         print(strings["verbose_changed"].format(

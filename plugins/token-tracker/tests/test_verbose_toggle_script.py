@@ -181,3 +181,70 @@ def test_missing_env_var_behaves_like_status_query(tmp_plugin_root: Path):
     assert "off" in r.stdout  # status query shows current state
     # config untouched
     assert _read_config(tmp_plugin_root)["verbose"] is False
+
+
+def test_os_replace_failure_returns_exit_1(tmp_plugin_root: Path):
+    """Isolate the os.replace failure path: writable parent dir, tmp write
+    succeeds, but the replace target is a directory (POSIX refuses to
+    overwrite a directory with a regular file). This is the one failure mode
+    NOT covered by the readonly-dir test.
+    """
+    # Sabotage config.json by making it a directory, not a file.
+    target = tmp_plugin_root / "config.json"
+    if target.exists():
+        target.unlink()
+    target.mkdir()
+    try:
+        r = _run(tmp_plugin_root, "on")
+        assert r.returncode == 1, f"expected exit 1, got {r.returncode}: {r.stdout!r} / {r.stderr!r}"
+        combined = r.stdout + r.stderr
+        # verbose_error_io message must appear (en locale falls back from defaults).
+        # "directory" appears in the IsADirectoryError strerror on both macOS and Linux.
+        assert ("directory" in combined.lower()
+                or "permission" in combined.lower()
+                or "failed to write" in combined.lower()), \
+            f"expected verbose_error_io message, got {combined!r}"
+        # n3: ensure {reason} actually interpolates str(e), not a blank.
+        assert "[Errno" in combined, \
+            f"expected [Errno N] from str(OSError) to be interpolated, got {combined!r}"
+    finally:
+        target.rmdir()
+
+
+def test_readonly_dir_returns_exit_1(tmp_plugin_root: Path):
+    """Read-only plugin root dir: tmp write itself fails → exit 1."""
+    _write_config(tmp_plugin_root, {"language": "en", "verbose": False})
+    tmp_plugin_root.chmod(0o500)
+    try:
+        r = _run(tmp_plugin_root, "on")
+        assert r.returncode == 1, f"expected exit 1, got {r.returncode}"
+        combined = r.stdout + r.stderr
+        # n3: {reason} must contain str(OSError) (e.g., "[Errno 13]").
+        assert "[Errno" in combined, \
+            f"expected [Errno N] from str(OSError) to be interpolated, got {combined!r}"
+    finally:
+        tmp_plugin_root.chmod(0o700)
+
+
+def test_ko_language_uses_korean_message(tmp_plugin_root: Path):
+    """Verify ko locale picks the Korean i18n message for the IO error.
+
+    We need config.json readable (so load_config picks up language=ko) AND
+    an IO failure on write. Keep config.json as a normal file, but create
+    config.json.tmp as a directory so tmp.write_text(...) inside
+    update_config fails with IsADirectoryError (subclass of OSError).
+    """
+    _write_config(tmp_plugin_root, {"language": "ko", "verbose": False})
+    tmp_target = tmp_plugin_root / "config.json.tmp"
+    tmp_target.mkdir()
+    try:
+        r = _run(tmp_plugin_root, "on")
+        assert r.returncode == 1
+        combined = r.stdout + r.stderr
+        assert "권한" in combined or "쓰기에 실패" in combined, \
+            f"expected Korean verbose_error_io message, got {combined!r}"
+        # n3: {reason} must contain str(OSError).
+        assert "[Errno" in combined, \
+            f"expected [Errno N] from str(OSError), got {combined!r}"
+    finally:
+        tmp_target.rmdir()

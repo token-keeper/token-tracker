@@ -28,7 +28,7 @@ def test_all_expected_keys_present_both_languages():
         "err_no_state", "err_parse", "err_unsupported_schema", "err_empty_turns",
         "verbose_on", "verbose_off",
         "verbose_status", "verbose_changed", "verbose_no_change",
-        "verbose_usage", "verbose_error",
+        "verbose_usage", "verbose_error", "verbose_error_io",
     }
     assert set(load_strings("ko").keys()) == expected_keys
     assert set(load_strings("en").keys()) == expected_keys
