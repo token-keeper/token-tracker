@@ -81,9 +81,13 @@ def _run_stop(tmp_path: Path, plugin_root: Path, env_overrides: dict) -> str:
 
 def _run_toggle(plugin_root: Path, arg: str) -> subprocess.CompletedProcess:
     script = plugin_root / "skills" / "token-verbose" / "scripts" / "verbose_toggle.py"
-    env = {"CLAUDE_PLUGIN_ROOT": str(plugin_root), "PATH": ""}
+    env = {
+        "CLAUDE_PLUGIN_ROOT": str(plugin_root),
+        "PATH": "",
+        "TOKEN_TRACKER_VERBOSE_ARG": arg,
+    }
     return subprocess.run(
-        [sys.executable, str(script), arg],
+        [sys.executable, str(script)],
         capture_output=True, text=True, env=env, timeout=5,
     )
 

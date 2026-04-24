@@ -49,9 +49,9 @@ def _read_config(root: Path) -> dict:
 def _run(root: Path, arg: str | None) -> subprocess.CompletedProcess:
     script = root / SCRIPT_RELATIVE
     argv = [sys.executable, str(script)]
-    if arg is not None:
-        argv.append(arg)
     env = {"CLAUDE_PLUGIN_ROOT": str(root), "PATH": ""}
+    if arg is not None:
+        env["TOKEN_TRACKER_VERBOSE_ARG"] = arg
     return subprocess.run(argv, capture_output=True, text=True, env=env, timeout=5)
 
 
@@ -152,3 +152,32 @@ def test_aliases_accepted_0_false_no_for_off(tmp_plugin_root: Path):
         r = _run(tmp_plugin_root, alias)
         assert r.returncode == 0, f"alias={alias!r} failed"
         assert _read_config(tmp_plugin_root)["verbose"] is False, f"alias={alias!r}"
+
+
+def test_arg_with_shell_metacharacters_is_literal(tmp_plugin_root: Path):
+    """$ARGUMENTS-origin values must not be re-evaluated by the script."""
+    # Evil-looking payloads — script must see them as literal strings.
+    for payload in ("$(rm -rf /)", "`whoami`", "on; echo pwned", '"; cat /etc/passwd; "'):
+        # Reset config before each payload so a regression in one iteration
+        # doesn't leak into the next.
+        _write_config(tmp_plugin_root, {"language": "en", "verbose": False})
+        r = _run(tmp_plugin_root, payload)
+        assert r.returncode == 0, f"payload={payload!r} crashed: {r.stderr}"
+        # Any non-canonical token falls to the "usage" branch, not mutation.
+        assert _read_config(tmp_plugin_root)["verbose"] is False, \
+            f"payload={payload!r} mutated config"
+
+
+def test_missing_env_var_behaves_like_status_query(tmp_plugin_root: Path):
+    """When TOKEN_TRACKER_VERBOSE_ARG is not set at all (not even empty),
+    the script should fall through to the status-query branch — same as
+    passing an empty string."""
+    _write_config(tmp_plugin_root, {"language": "en", "verbose": False})
+    # _run(root, None) deliberately does NOT insert TOKEN_TRACKER_VERBOSE_ARG
+    # into the subprocess env, exercising the default branch of
+    # os.environ.get("TOKEN_TRACKER_VERBOSE_ARG", "").
+    r = _run(tmp_plugin_root, None)
+    assert r.returncode == 0, f"unexpected crash: {r.stderr}"
+    assert "off" in r.stdout  # status query shows current state
+    # config untouched
+    assert _read_config(tmp_plugin_root)["verbose"] is False
