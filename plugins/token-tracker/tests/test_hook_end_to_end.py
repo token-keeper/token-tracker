@@ -849,6 +849,106 @@ def test_systemMessage_omits_legend_when_all_subs_have_model(tmp_path):
     )
 
 
+def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
+    """v0.6.2 CRITICAL 회귀 가드.
+
+    풀체인: 메인 jsonl Agent tool_use input.model="sonnet" (unknown alias) +
+    completed tool_result. on_stop이 fg_sub.model="sonnet"으로 채우고,
+    aggregator/formatter가 silent $0이 아니라 부모(opus) 단가로 fallback해야 한다.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_ALIAS",
+                    "name": "Agent",
+                    "input": {
+                        "subagent_type": "general-purpose",
+                        "model": "sonnet",  # short alias — NOT in PRICING table
+                    },
+                }
+            ],
+            "usage": {
+                "input_tokens": 0, "output_tokens": 0,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    fg_tool_result = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_ALIAS", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "usage": {
+                "input_tokens": 1_000_000, "output_tokens": 0,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "totalDurationMs": 5000,
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    payload = {
+        "session_id": "alias-fallback",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+        f.write(json.dumps(fg_tool_result) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+
+    # Cost extraction from one-liner: "$X.XXXX" near the start
+    import re
+    m = re.search(r"\$([0-9]+\.[0-9]+)", msg)
+    assert m, f"expected $cost in output, got: {msg!r}"
+    cost = float(m.group(1))
+    # Expected: 1M sub input * opus rate ($15/MTok) = $15.0 (NOT $0.0)
+    assert cost > 14.0, (
+        f"sub with unknown alias 'sonnet' should bill at parent (opus) rate "
+        f"(~$15.0), got ${cost} in: {msg!r}"
+    )
+
+
 def test_error_path_emits_diagnostic(tmp_path):
     """An exception inside the hook should still produce a systemMessage and exit 0."""
     fake_home = tmp_path / "home"
