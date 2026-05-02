@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from lib.parser import (
@@ -9,6 +10,17 @@ from lib.parser import (
     parse_async_launch,
     parse_sidechain_assistant,
 )
+
+
+# agent_id is interpolated into a filename (`agent-{agent_id}.jsonl`) and
+# comes from the main jsonl, which is external input. Restrict to a safe
+# alphabet so attackers can't inject `../` segments or absolute paths to read
+# arbitrary files via the path traversal.
+_SAFE_AGENT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _is_safe_agent_id(agent_id: str) -> bool:
+    return bool(isinstance(agent_id, str) and _SAFE_AGENT_ID.fullmatch(agent_id))
 
 
 def find_sidechain_dir(transcript_path: str) -> Path | None:
@@ -72,9 +84,24 @@ def collect_sidechain_subagents(
     out: list[SubagentUsage] = []
     if not isinstance(sidechain_dir, Path):
         sidechain_dir = Path(sidechain_dir)
+    sidechain_resolved = sidechain_dir.resolve()
     for agent_id, (tool_use_id, agent_type) in launches.items():
+        # Path traversal guard: only allow safe filename characters.
+        if not _is_safe_agent_id(agent_id):
+            continue
         path = sidechain_dir / f"agent-{agent_id}.jsonl"
         if not path.is_file():
+            continue
+        # Symlink guard: refuse to follow links — they could point outside
+        # sidechain_dir (e.g., to another user's files).
+        if path.is_symlink():
+            continue
+        # Defense in depth: even with the regex + symlink check, ensure the
+        # resolved path stays inside sidechain_dir.
+        try:
+            if not path.resolve().is_relative_to(sidechain_resolved):
+                continue
+        except (OSError, ValueError):
             continue
         try:
             with path.open("r", encoding="utf-8") as f:

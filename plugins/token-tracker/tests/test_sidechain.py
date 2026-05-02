@@ -215,6 +215,72 @@ def test_collect_sidechain_subagents_skips_missing_file(tmp_path):
     assert subs[0].agent_type == "type-A"
 
 
+def test_collect_skips_path_traversal_agent_id(tmp_path):
+    """agent_id가 ../evil 같은 경로 탈출 문자를 포함하면 silent skip."""
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+
+    # Create a file outside sub_dir that traversal would resolve to.
+    outside = tmp_path / "sess" / "evil.jsonl"
+    outside.write_text(
+        json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-04-23T12:00:00Z",
+            "message": {
+                "id": "msg_evil", "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 999, "output_tokens": 999,
+                          "cache_creation_input_tokens": 0,
+                          "cache_read_input_tokens": 0},
+                "content": [],
+            },
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    launches = {
+        "../evil": ("toolu_x", "type-X"),
+        "..": ("toolu_y", "type-Y"),
+        "/abs/path": ("toolu_z", "type-Z"),
+    }
+    subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
+    assert subs == []
+
+
+def test_collect_skips_symlink_targets(tmp_path):
+    """sidechain dir 안의 agent-X.jsonl 이 symlink면 silent skip."""
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+
+    # Real file outside sub_dir.
+    target = tmp_path / "outside.jsonl"
+    target.write_text(
+        json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-04-23T12:00:00Z",
+            "message": {
+                "id": "msg_t", "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_input_tokens": 0,
+                          "cache_read_input_tokens": 0},
+                "content": [],
+            },
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    # Create symlink agent-evil.jsonl pointing to outside.
+    link = sub_dir / "agent-evil.jsonl"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):  # platforms without symlink support
+        import pytest
+        pytest.skip("symlink not supported on this platform")
+
+    launches = {"evil": ("toolu_x", "type-X")}
+    subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
+    assert subs == []
+
+
 def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):
     sub_dir = tmp_path / "sess" / "subagents"
     sub_dir.mkdir(parents=True)
