@@ -341,3 +341,84 @@ def test_parse_line_ignores_non_agent_tool_use():
     t = parser.parse_line(entry)
     assert t is not None
     assert t.agent_tool_use_ids == []
+
+
+# ---------------------------------------------------------------------------
+# parse_agent_tool_uses — shared helper for (id, subagent_type) extraction
+# ---------------------------------------------------------------------------
+
+
+def test_parse_agent_tool_uses_single_agent_block():
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_1",
+            "model": "claude-opus-4-7",
+            "content": [
+                {"type": "text", "text": "ok"},
+                {
+                    "type": "tool_use",
+                    "name": "Agent",
+                    "id": "toolu_a",
+                    "input": {"subagent_type": "claude-code-guide"},
+                },
+            ],
+        },
+    }
+    pairs = parser.parse_agent_tool_uses(entry)
+    assert pairs == [("toolu_a", "claude-code-guide")]
+
+
+def test_parse_agent_tool_uses_multiple_agent_blocks():
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_1",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Agent",
+                    "id": "toolu_a",
+                    "input": {"subagent_type": "claude-code-guide"},
+                },
+                {"type": "tool_use", "name": "Read", "id": "toolu_read"},
+                {
+                    "type": "tool_use",
+                    "name": "Agent",
+                    "id": "toolu_b",
+                    "input": {"subagent_type": "general-purpose"},
+                },
+                {
+                    # Agent block without subagent_type → empty string
+                    "type": "tool_use",
+                    "name": "Agent",
+                    "id": "toolu_c",
+                },
+            ],
+        },
+    }
+    pairs = parser.parse_agent_tool_uses(entry)
+    assert pairs == [
+        ("toolu_a", "claude-code-guide"),
+        ("toolu_b", "general-purpose"),
+        ("toolu_c", ""),
+    ]
+
+
+def test_parse_agent_tool_uses_returns_empty_for_non_assistant_or_no_agent():
+    # user line
+    assert parser.parse_agent_tool_uses({"type": "user", "message": {}}) == []
+    # assistant line with no Agent tool_use
+    entry = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "tool_use", "name": "Read", "id": "toolu_read"},
+                {"type": "text", "text": "hi"},
+            ],
+        },
+    }
+    assert parser.parse_agent_tool_uses(entry) == []
+    # malformed
+    assert parser.parse_agent_tool_uses({}) == []
+    assert parser.parse_agent_tool_uses({"type": "assistant"}) == []

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from lib.parser import (
     SubagentUsage,
+    parse_agent_tool_uses,
     parse_async_launch,
     parse_sidechain_assistant,
 )
@@ -34,38 +35,17 @@ def extract_async_launches(
 ) -> dict[str, tuple[str, str]]:
     """메인 jsonl entries에서 async Agent 호출의 (tool_use_id, agent_type) 매핑을 만든다.
 
-    1) assistant 라인의 Agent tool_use 블록에서 id → subagent_type 매핑을 모음.
+    1) `parse_agent_tool_uses`로 모든 assistant 라인의 (id, subagent_type) 룩업 dict 구성.
     2) user 라인의 async_launched toolUseResult 에서 (tool_use_id, agent_id) 추출.
     3) 둘을 합쳐 {agent_id: (tool_use_id, agent_type)} 반환.
 
     agent_type 정보가 없으면 빈 문자열로 둔다.
     """
-    # tool_use_id → agent_type
+    # tool_use_id → agent_type (assistant 라인 Agent tool_use 블록 룩업)
     type_by_tu_id: dict[str, str] = {}
     for e in entries:
-        if not isinstance(e, dict):
-            continue
-        if e.get("type") != "assistant":
-            continue
-        msg = e.get("message")
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content") or []
-        if not isinstance(content, list):
-            continue
-        for blk in content:
-            if not isinstance(blk, dict):
-                continue
-            if blk.get("type") != "tool_use":
-                continue
-            if blk.get("name") != "Agent":
-                continue
-            tu_id = blk.get("id")
-            if not isinstance(tu_id, str) or not tu_id:
-                continue
-            inp = blk.get("input") if isinstance(blk.get("input"), dict) else {}
-            sa_type = inp.get("subagent_type") or ""
-            type_by_tu_id[tu_id] = str(sa_type)
+        for tu_id, sa_type in parse_agent_tool_uses(e):
+            type_by_tu_id[tu_id] = sa_type
 
     # agent_id → (tool_use_id, agent_type)
     out: dict[str, tuple[str, str]] = {}

@@ -48,6 +48,42 @@ def _iso_to_epoch(iso: str) -> float | None:
         return None
 
 
+def parse_agent_tool_uses(entry: dict) -> list[tuple[str, str]]:
+    """assistant 엔트리에서 (tool_use_id, subagent_type) 쌍을 모두 반환.
+
+    assistant 라인이 아니거나 Agent tool_use 블록이 없으면 빈 리스트.
+    `subagent_type`은 `input.subagent_type`에서, 없으면 빈 문자열로 둔다.
+    이 헬퍼는 `parse_line`의 `agent_tool_use_ids` 수집과 sidechain 모듈의
+    async 매핑이 같은 jsonl 구조 해석을 공유하도록 만든다.
+    """
+    if not isinstance(entry, dict):
+        return []
+    if entry.get("type") != "assistant":
+        return []
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return []
+    content = msg.get("content") or []
+    if not isinstance(content, list):
+        return []
+
+    pairs: list[tuple[str, str]] = []
+    for blk in content:
+        if not isinstance(blk, dict):
+            continue
+        if blk.get("type") != "tool_use":
+            continue
+        if blk.get("name") != "Agent":
+            continue
+        tu_id = blk.get("id")
+        if not isinstance(tu_id, str) or not tu_id:
+            continue
+        inp = blk.get("input") if isinstance(blk.get("input"), dict) else {}
+        sa_type = inp.get("subagent_type") or ""
+        pairs.append((tu_id, str(sa_type)))
+    return pairs
+
+
 def parse_line(entry: dict) -> TurnUsage | None:
     if not isinstance(entry, dict):
         return None
@@ -71,14 +107,7 @@ def parse_line(entry: dict) -> TurnUsage | None:
         {"name": name, "count": count}
         for name, count in counter.items()
     ]
-    agent_tool_use_ids = [
-        str(blk.get("id", ""))
-        for blk in content
-        if isinstance(blk, dict)
-        and blk.get("type") == "tool_use"
-        and blk.get("name") == "Agent"
-        and blk.get("id")
-    ]
+    agent_tool_use_ids = [tu_id for tu_id, _ in parse_agent_tool_uses(entry)]
 
     timestamp_iso = entry.get("timestamp", "")
 
