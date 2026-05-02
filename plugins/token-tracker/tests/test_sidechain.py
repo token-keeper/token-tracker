@@ -281,6 +281,51 @@ def test_collect_skips_symlink_targets(tmp_path):
     assert subs == []
 
 
+def test_collect_handles_empty_sidechain_dir(tmp_path):
+    """sidechain_dir이 존재하나 파일 0개. launches가 비어있지 않아도 빈 리스트 반환."""
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+
+    launches = {
+        "alpha": ("toolu_a", "type-A"),
+        "beta": ("toolu_b", "type-B"),
+    }
+    subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
+    assert subs == []
+
+
+def test_collect_handles_empty_jsonl_file(tmp_path):
+    """agent-X.jsonl이 0바이트. silent skip + 결과에 미포함."""
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+
+    # Empty (0-byte) file
+    (sub_dir / "agent-empty.jsonl").write_text("", encoding="utf-8")
+    # Real file as control
+    _write_sidechain_file(sub_dir, "good", [
+        {
+            "type": "assistant",
+            "timestamp": "2026-04-23T12:00:00Z",
+            "message": {
+                "id": "msg_g", "model": "claude-haiku-4-5",
+                "usage": {"input_tokens": 5, "output_tokens": 6,
+                          "cache_creation_input_tokens": 0,
+                          "cache_read_input_tokens": 0},
+                "content": [],
+            },
+        },
+    ])
+
+    launches = {
+        "empty": ("toolu_e", "type-E"),
+        "good": ("toolu_g", "type-G"),
+    }
+    subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
+    # Only the populated file contributes.
+    assert len(subs) == 1
+    assert subs[0].tool_use_id == "toolu_g"
+
+
 def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):
     sub_dir = tmp_path / "sess" / "subagents"
     sub_dir.mkdir(parents=True)

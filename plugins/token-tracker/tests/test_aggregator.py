@@ -151,6 +151,23 @@ def test_aggregate_default_subagents_none_keeps_legacy_behavior():
     assert s_none.turns[0].subagents == []
 
 
+def test_aggregate_with_empty_subagents_list_matches_legacy():
+    """subagents=[] 도 None과 동일한 legacy 결과여야 한다 (회귀 가드)."""
+    ts = [
+        _mk(input_tokens=100, output_tokens=50, cache_read_tokens=10, message_id="a"),
+        _mk(input_tokens=200, output_tokens=70, message_id="b"),
+    ]
+    s_legacy = aggregator.aggregate(ts, elapsed=0.0)
+    s_empty = aggregator.aggregate(ts, elapsed=0.0, subagents=[])
+    assert s_legacy.total_cost == s_empty.total_cost
+    assert s_legacy.total_input_tokens == s_empty.total_input_tokens
+    assert s_legacy.total_output_tokens == s_empty.total_output_tokens
+    assert s_legacy.cache_hit_rate == s_empty.cache_hit_rate
+    assert len(s_legacy.turns) == len(s_empty.turns)
+    for tl, te in zip(s_legacy.turns, s_empty.turns):
+        assert tl.subagents == [] and te.subagents == []
+
+
 def test_aggregate_attaches_subagent_to_parent_by_tool_use_id():
     parent = _mk(
         input_tokens=10, output_tokens=20, message_id="p1",
