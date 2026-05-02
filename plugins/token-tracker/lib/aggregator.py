@@ -76,18 +76,18 @@ def aggregate(
         _attach_subagents(unique, subagents)
 
     # Single-pass accumulation across each turn and its attached subagents.
-    # Subagents are billed at the parent turn's model rate (D6) — sub has no
-    # model field, the parent is the source of truth for billing. Input-side
-    # total includes cache_creation so displayed "toks" matches what the cost
-    # number actually bills for (otherwise a big cache warmup shows tiny toks
-    # with a large cost, which looks wrong).
+    # Subagents bill at their own model rate when sub.model is known
+    # (sidechain message.model or dispatch input.model); otherwise fall back
+    # to the parent turn model. Input-side total includes cache_creation so
+    # displayed "toks" matches what the cost number actually bills for.
     total_cost = 0.0
     total_input = 0
     total_output = 0
     cache_read = 0
     for t in unique:
         for item in (t, *t.subagents):
-            total_cost += compute_cost(t.model, item)
+            billing_model = getattr(item, "model", "") or t.model
+            total_cost += compute_cost(billing_model, item)
             total_input += (
                 item.input_tokens
                 + item.cache_creation_tokens

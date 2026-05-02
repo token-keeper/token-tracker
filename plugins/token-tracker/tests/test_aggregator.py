@@ -272,3 +272,18 @@ def test_aggregate_total_cost_uses_parent_model_rate_for_subagent():
     s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
     # parent cost = 0, sub cost = 1M * 15 / 1M = 15.0 (opus input rate)
     assert math.isclose(s.total_cost, 15.0, rel_tol=1e-6)
+
+
+def test_aggregate_uses_sub_model_for_cost_when_set():
+    """sub.model이 채워져 있으면 부모 단가가 아닌 sub 자체 단가로 비용 산정."""
+    parent = _mk(
+        model="claude-opus-4-7",
+        input_tokens=0, output_tokens=0, message_id="p1",
+    )
+    parent.agent_tool_use_ids = ["toolu_a"]
+    # sub: 1M input tokens, 자체 model = haiku → haiku input rate $1.0/MTok
+    sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000)
+    sub.model = "claude-haiku-4-5"
+    s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
+    # parent cost = 0, sub cost = 1M * 1.0 / 1M = 1.0 (haiku input rate, not opus $15)
+    assert math.isclose(s.total_cost, 1.0, rel_tol=1e-6)
