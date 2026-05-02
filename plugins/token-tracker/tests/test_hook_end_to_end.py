@@ -344,6 +344,131 @@ def test_stop_polls_for_delayed_flush(tmp_path):
     assert toks > 0, f"polling should have caught the delayed assistant line, got {toks} toks in: {msg!r}"
 
 
+def test_sidechain_async_subagent_tokens_included_in_summary(tmp_path):
+    """When the transcript launches an async Agent and a sidechain jsonl exists,
+    the Stop hook must read the sidechain assistant turns and include their
+    tokens in the systemMessage one-liner."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    # transcript path stem must match the sidechain dir name.
+    session_stem = "sess-side"
+    session_path = tmp_path / f"{session_stem}.jsonl"
+    sidechain_dir = tmp_path / session_stem / "subagents"
+    sidechain_dir.mkdir(parents=True)
+
+    # Main transcript: user → assistant (Agent tool_use) → user (async_launched)
+    main_lines = [
+        {
+            "type": "user",
+            "uuid": "u-main-1",
+            "timestamp": "2026-04-23T10:00:00.000Z",
+            "message": {"role": "user", "content": "go"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a-main-1",
+            "timestamp": "2026-04-23T10:00:01.000Z",
+            "message": {
+                "id": "msg_main_1",
+                "role": "assistant",
+                "model": "claude-opus-4-7",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_async_1",
+                        "name": "Agent",
+                        "input": {"subagent_type": "claude-code-guide"},
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 50,
+                    "output_tokens": 10,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        },
+        {
+            "type": "user",
+            "uuid": "u-launch-1",
+            "timestamp": "2026-04-23T10:00:02.000Z",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_async_1", "content": "launched"}
+                ],
+            },
+            "toolUseResult": {
+                "agentType": "claude-code-guide",
+                "agentId": "agent-side-1",
+                "status": "async_launched",
+            },
+        },
+    ]
+    # Step 1: only user line is present at UserPromptSubmit time
+    # so the recorded offset starts before assistant lines.
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(main_lines[0]) + "\n")
+
+    # Sidechain jsonl with one assistant turn (subagent's own tokens).
+    sidechain_lines = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-04-23T10:00:03.000Z",
+            "message": {
+                "id": "msg_side_1",
+                "role": "assistant",
+                "model": "claude-haiku-4-5",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 200,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            },
+        }
+    ]
+    side_file = sidechain_dir / "agent-agent-side-1.jsonl"
+    with side_file.open("w", encoding="utf-8") as f:
+        for ln in sidechain_lines:
+            f.write(json.dumps(ln) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    payload = {
+        "session_id": "e2e-side",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    # Step 2: assistant + async_launched lines arrive after UserPromptSubmit
+    with session_path.open("a", encoding="utf-8") as f:
+        for ln in main_lines[1:]:
+            f.write(json.dumps(ln) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+
+    # Expected tokens: main(50+10) + sidechain(1000+200) = 1260
+    # input side counts input + cache_creation + cache_read; here cache=0.
+    import re
+    m = re.search(r"([\d,]+) toks", msg)
+    assert m, f"expected 'N toks' in output, got: {msg!r}"
+    toks = int(m.group(1).replace(",", ""))
+    assert toks == 1260, (
+        f"expected main(60) + sidechain(1200) = 1260 toks, got {toks} in: {msg!r}"
+    )
+
+
 def test_error_path_emits_diagnostic(tmp_path):
     """An exception inside the hook should still produce a systemMessage and exit 0."""
     fake_home = tmp_path / "home"

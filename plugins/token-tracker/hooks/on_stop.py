@@ -68,9 +68,14 @@ def main() -> int:
             return 0
 
         from lib.state import load_state
-        from lib.parser import parse_line
+        from lib.parser import parse_line, parse_tool_result_for_agent
         from lib.aggregator import aggregate
         from lib.formatter import format_summary
+        from lib.sidechain import (
+            collect_sidechain_subagents,
+            extract_async_launches,
+            find_sidechain_dir,
+        )
 
         state = load_state(session_id)
         has_state = state is not None
@@ -93,8 +98,20 @@ def main() -> int:
         if not has_state and not turns:
             return 0
 
+        # Foreground (sync) subagents: extracted from main jsonl tool_result lines.
+        fg_subs = [
+            s for s in (parse_tool_result_for_agent(e) for e in entries) if s is not None
+        ]
+        # Async subagents: extracted from sidechain jsonl files when available.
+        async_subs = []
+        sidechain_dir = find_sidechain_dir(transcript_path)
+        if sidechain_dir is not None:
+            launches = extract_async_launches(entries)
+            if launches:
+                async_subs = collect_sidechain_subagents(sidechain_dir, launches)
+
         elapsed = max(0.0, time.time() - started_at)
-        summary = aggregate(turns, elapsed=elapsed)
+        summary = aggregate(turns, elapsed=elapsed, subagents=fg_subs + async_subs)
 
         # Persist the just-computed Summary so /token-detail can read it.
         # Only save when we actually produced turns (flush polling finished).
