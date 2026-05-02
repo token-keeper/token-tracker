@@ -131,7 +131,7 @@ def test_last_summary_saved_after_stop(tmp_path):
     )
     assert summary_file.is_file(), f"last_summary.json not saved at {summary_file}"
     data = json.loads(summary_file.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     assert data["session_id"] == session_id
     assert isinstance(data["summary"]["turns"], list)
     assert len(data["summary"]["turns"]) >= 1

@@ -81,3 +81,14 @@ def test_script_outputs_err_unsupported_schema(tmp_path):
     result = _run_script("sess-future", env_overrides={"HOME": str(tmp_path)})
     assert result.returncode == 0
     assert ("호환되지 않습니다" in result.stdout) or ("not compatible" in result.stdout)
+
+
+def test_script_accepts_v2_schema(tmp_path):
+    payload = _valid_summary_payload("sess-v2")
+    payload["schema_version"] = 2
+    payload["summary"]["turns"][0]["subagents"] = []
+    payload["summary"]["turns"][0]["agent_tool_use_ids"] = []
+    _seed_last_summary(tmp_path, "sess-v2", payload)
+    result = _run_script("sess-v2", env_overrides={"HOME": str(tmp_path)})
+    assert result.returncode == 0
+    assert "Read×1" in result.stdout
