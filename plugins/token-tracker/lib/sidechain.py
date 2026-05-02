@@ -56,7 +56,7 @@ def extract_async_launches(
     # tool_use_id → agent_type (assistant 라인 Agent tool_use 블록 룩업)
     type_by_tu_id: dict[str, str] = {}
     for e in entries:
-        for tu_id, sa_type in parse_agent_tool_uses(e):
+        for tu_id, sa_type, _model in parse_agent_tool_uses(e):
             type_by_tu_id[tu_id] = sa_type
 
     # agent_id → (tool_use_id, agent_type)
