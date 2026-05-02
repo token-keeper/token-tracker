@@ -45,6 +45,17 @@ def _resolve_rates(model: str) -> dict[str, float] | None:
 
 
 def compute_cost(model: str, usage: TurnUsage) -> float:
+    """Compute USD cost for a usage record.
+
+    Accepts any object exposing the four token-count fields (`input_tokens`,
+    `output_tokens`, `cache_creation_tokens`, `cache_read_tokens`) — both
+    TurnUsage and SubagentUsage satisfy this duck-typed contract.
+
+    Future work: sidechain JSONL splits cache_creation into
+    `ephemeral_1h_input_tokens` / `ephemeral_5m_input_tokens` tiers with
+    different rates. We currently sum them into a single `cache_creation_tokens`
+    field. Separating the tiers is a pricing-precision task tracked outside D6.
+    """
     rates = _resolve_rates(model)
     if rates is None:
         return 0.0

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from lib.aggregator import Summary
 from lib.i18n_loader import load_strings
-from lib.parser import TurnUsage
+from lib.parser import SubagentUsage, TurnUsage
 from lib.pricing import compute_cost
 
 
@@ -26,6 +26,8 @@ _COLUMNS = [
     Column("col_cost", 10, "right"),
     Column("col_time", 7, "right"),
 ]
+_MODEL_COL_INDEX = 1
+_MODEL_COL_MAX_WIDTH = 35  # cap to keep table from growing absurdly wide
 _GAP = 2
 
 
@@ -81,6 +83,17 @@ def _turn_time(turn: TurnUsage, next_turn: TurnUsage | None,
     return None
 
 
+def _sub_label(sub: SubagentUsage, prefix: str) -> str:
+    name = sub.agent_type if sub.agent_type else "(unknown)"
+    return f"{prefix}{name}"
+
+
+def _sub_time_str(sub: SubagentUsage) -> str:
+    if sub.total_duration_ms and sub.total_duration_ms > 0:
+        return f"{sub.total_duration_ms / 1000:.1f}s"
+    return "-"
+
+
 def format_detail(summary: Summary, language: str) -> str:
     s = load_strings(language)
 
@@ -96,7 +109,29 @@ def format_detail(summary: Summary, language: str) -> str:
         rate=cache_rate, elapsed=elapsed,
     )
 
-    header_cells = [_pad(s[c.key], c.width, c.align) for c in _COLUMNS]
+    sub_prefix = s["subagent_row_prefix"]
+
+    # Compute dynamic model column width: max of header label, all turn
+    # model strings, and all subagent labels (with prefix). Floor at the
+    # default Column width so existing tests keep their truncation behavior.
+    model_default_width = _COLUMNS[_MODEL_COL_INDEX].width
+    candidates: list[str] = [s["col_model"]]
+    for turn in summary.turns:
+        candidates.append(turn.model)
+        for sub in turn.subagents:
+            candidates.append(_sub_label(sub, sub_prefix))
+    needed_width = max(visual_width(c) for c in candidates)
+    dynamic_model_width = min(
+        _MODEL_COL_MAX_WIDTH, max(model_default_width, needed_width)
+    )
+
+    # Build the resolved column list with the dynamic model width applied.
+    columns = list(_COLUMNS)
+    columns[_MODEL_COL_INDEX] = replace(
+        columns[_MODEL_COL_INDEX], width=dynamic_model_width
+    )
+
+    header_cells = [_pad(s[c.key], c.width, c.align) for c in columns]
     col_header_row = (" " * _GAP).join(header_cells)
 
     row_width = visual_width(col_header_row)
@@ -105,6 +140,7 @@ def format_detail(summary: Summary, language: str) -> str:
 
     rows: list[str] = []
     prior_sum = 0.0
+    has_subagents = False
     for i, turn in enumerate(summary.turns):
         next_turn = summary.turns[i + 1] if i + 1 < len(summary.turns) else None
         t_sec = _turn_time(turn, next_turn, prior_sum, summary.total_elapsed)
@@ -124,8 +160,28 @@ def format_detail(summary: Summary, language: str) -> str:
             cost,
             t_str,
         ]
-        padded = [_pad(c, col.width, col.align) for c, col in zip(cells, _COLUMNS)]
+        padded = [_pad(c, col.width, col.align) for c, col in zip(cells, columns)]
         rows.append((" " * _GAP).join(padded))
+
+        # Child rows for subagents under this parent turn.
+        for sub in turn.subagents:
+            has_subagents = True
+            sub_cost = f"${compute_cost(turn.model, sub):.4f}"
+            sub_cells = [
+                "",  # # column blank for child rows
+                _sub_label(sub, sub_prefix),
+                "",  # tools column blank for child rows (T6 future)
+                f"{sub.input_tokens:,}",
+                f"{sub.cache_creation_tokens:,}",
+                f"{sub.cache_read_tokens:,}",
+                f"{sub.output_tokens:,}",
+                sub_cost,
+                _sub_time_str(sub),
+            ]
+            sub_padded = [
+                _pad(c, col.width, col.align) for c, col in zip(sub_cells, columns)
+            ]
+            rows.append((" " * _GAP).join(sub_padded))
 
     parts = [
         rule,
@@ -137,4 +193,6 @@ def format_detail(summary: Summary, language: str) -> str:
         rule,
         " " + s["legend"],
     ]
+    if has_subagents:
+        parts.append(" " + s["subagent_legend"])
     return "\n".join(parts)

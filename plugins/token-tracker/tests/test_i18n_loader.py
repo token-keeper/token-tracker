@@ -29,6 +29,7 @@ def test_all_expected_keys_present_both_languages():
         "verbose_on", "verbose_off",
         "verbose_status", "verbose_changed", "verbose_no_change",
         "verbose_usage", "verbose_error", "verbose_error_io",
+        "subagent_row_prefix", "subagent_legend",
     }
     assert set(load_strings("ko").keys()) == expected_keys
     assert set(load_strings("en").keys()) == expected_keys

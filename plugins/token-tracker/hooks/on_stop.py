@@ -68,9 +68,14 @@ def main() -> int:
             return 0
 
         from lib.state import load_state
-        from lib.parser import parse_line
+        from lib.parser import parse_line, parse_tool_result_for_agent
         from lib.aggregator import aggregate
         from lib.formatter import format_summary
+        from lib.sidechain import (
+            collect_sidechain_subagents,
+            extract_async_launches,
+            find_sidechain_dir,
+        )
 
         state = load_state(session_id)
         has_state = state is not None
@@ -78,23 +83,53 @@ def main() -> int:
         offset = int(state.get("offset", 0))
         started_at = float(state.get("started_at", time.time()))
 
-        # Claude Code sometimes fires Stop before the assistant line has been
-        # flushed to the JSONL. Poll up to 500ms when the initial read yields
-        # no assistant turns — total ≤500ms added to Stop latency worst-case.
-        entries = _read_tail(transcript_path, offset)
-        turns = [t for t in (parse_line(e) for e in entries) if t is not None]
+        # Claude Code sometimes fires Stop before the assistant line — or its
+        # subagent tool_result line — has been flushed to the JSONL. Poll up to
+        # 500ms (5×100ms) until BOTH conditions are satisfied:
+        #   1. at least one assistant turn is readable, AND
+        #   2. every Agent tool_use_id from those turns has a matching fg sub
+        #      tool_result line (status=="completed").
+        # Async (sidechain) subagents are handled separately and may legitimately
+        # be missing from the main jsonl — they are not part of this gate.
+        def _read_state() -> tuple[list, list, list]:
+            ents = _read_tail(transcript_path, offset)
+            tns = [t for t in (parse_line(e) for e in ents) if t is not None]
+            fgs = [
+                s for s in (parse_tool_result_for_agent(e) for e in ents) if s is not None
+            ]
+            return ents, tns, fgs
+
+        def _missing_fg_match(tns, fgs) -> bool:
+            expected = {tu for t in tns for tu in t.agent_tool_use_ids}
+            if not expected:
+                return False
+            matched = {s.tool_use_id for s in fgs}
+            return bool(expected - matched)
+
+        entries, turns, fg_subs = _read_state()
         retries = 0
-        while has_state and not turns and retries < 5:
+        while (
+            has_state
+            and retries < 5
+            and (not turns or _missing_fg_match(turns, fg_subs))
+        ):
             time.sleep(0.1)
-            entries = _read_tail(transcript_path, offset)
-            turns = [t for t in (parse_line(e) for e in entries) if t is not None]
+            entries, turns, fg_subs = _read_state()
             retries += 1
 
         if not has_state and not turns:
             return 0
 
+        # Async subagents: extracted from sidechain jsonl files when available.
+        async_subs = []
+        sidechain_dir = find_sidechain_dir(transcript_path)
+        if sidechain_dir is not None:
+            launches = extract_async_launches(entries)
+            if launches:
+                async_subs = collect_sidechain_subagents(sidechain_dir, launches)
+
         elapsed = max(0.0, time.time() - started_at)
-        summary = aggregate(turns, elapsed=elapsed)
+        summary = aggregate(turns, elapsed=elapsed, subagents=fg_subs + async_subs)
 
         # Persist the just-computed Summary so /token-detail can read it.
         # Only save when we actually produced turns (flush polling finished).

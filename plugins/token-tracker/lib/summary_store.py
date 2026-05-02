@@ -11,10 +11,11 @@ from pathlib import Path
 
 from lib import paths
 from lib.aggregator import Summary
-from lib.parser import TurnUsage
+from lib.parser import SubagentUsage, TurnUsage
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
 
 
 def _summary_path(session_id: str) -> Path:
@@ -44,6 +45,50 @@ def save_last_summary(session_id: str, summary: Summary) -> None:
         raise
 
 
+_TURN_KEYS = (
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "tools_used",
+    "timestamp_iso",
+    "message_id",
+    "index",
+    "started_at",
+    "ended_at",
+    "agent_tool_use_ids",
+)
+_SUB_KEYS = (
+    "agent_type",
+    "tool_use_id",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "total_duration_ms",
+)
+
+
+def _turn_from_dict(raw: dict) -> TurnUsage:
+    """Reconstruct a TurnUsage from a dict, normalizing across schema versions.
+
+    v1 turns may be missing `subagents` and `agent_tool_use_ids`. v2 turns
+    include both, with `subagents` as a list of dicts that we lift back into
+    SubagentUsage instances. Older v2 files may contain removed-since fields
+    (`agent_id`, `started_at`, `model` on subagents) — we filter via explicit
+    key-pickup rather than `**data`, so the unknown keys are silently dropped.
+    """
+    raw_subs = raw.get("subagents") or []
+    subs: list[SubagentUsage] = []
+    for s in raw_subs:
+        if isinstance(s, dict):
+            subs.append(SubagentUsage(**{k: s[k] for k in _SUB_KEYS if k in s}))
+    turn = TurnUsage(**{k: raw[k] for k in _TURN_KEYS if k in raw})
+    turn.subagents = subs
+    return turn
+
+
 def load_last_summary(session_id: str) -> Summary | None:
     target = _summary_path(session_id)
     if not target.exists():
@@ -55,9 +100,10 @@ def load_last_summary(session_id: str) -> Summary | None:
         print(traceback.format_exc(), file=sys.stderr)
         return None
 
-    if data.get("schema_version") != SCHEMA_VERSION:
+    schema_version = data.get("schema_version")
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         print(
-            f"[summary_store] unsupported schema_version={data.get('schema_version')} at {target}",
+            f"[summary_store] unsupported schema_version={schema_version} at {target}",
             file=sys.stderr,
         )
         return None
@@ -66,7 +112,7 @@ def load_last_summary(session_id: str) -> Summary | None:
     if not isinstance(sd, dict):
         return None
     try:
-        turns = [TurnUsage(**t) for t in sd.get("turns", [])]
+        turns = [_turn_from_dict(t) for t in sd.get("turns", [])]
         return Summary(
             total_cost=float(sd["total_cost"]),
             total_input_tokens=int(sd["total_input_tokens"]),

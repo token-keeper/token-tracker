@@ -11,6 +11,8 @@
   "col_cost": "cost",
   "col_time": "time",
   "legend": "legend: cc=cache_creation, cr=cache_read",
+  "subagent_row_prefix": "└ ",
+  "subagent_legend": "* subagent cost is estimated using parent model rate",
   "err_no_state": "No recorded request yet. Ask Claude first, then retry.",
   "err_parse": "Could not read detail (file corrupted).",
   "err_unsupported_schema": "State file is not compatible with current skill (delete; will regenerate on next response).",
