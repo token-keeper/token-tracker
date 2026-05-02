@@ -122,6 +122,29 @@ def test_is_known_model_accepts_prefix():
     assert pricing.is_known_model("claude-unknown-x") is False
 
 
+def test_effective_billing_model_prefers_known_sub_model():
+    """sub.model이 알려진 정식 id면 sub 단가로 청구."""
+    assert pricing.effective_billing_model(
+        "claude-haiku-4-5", "claude-opus-4-7"
+    ) == "claude-haiku-4-5"
+
+
+def test_effective_billing_model_falls_back_when_sub_model_empty():
+    """sub.model이 빈 문자열이면 부모 단가."""
+    assert pricing.effective_billing_model("", "claude-opus-4-7") == "claude-opus-4-7"
+
+
+def test_effective_billing_model_falls_back_when_sub_model_unknown_alias():
+    """sub.model이 short alias 같은 unknown 값이면 silent $0이 아니라 부모 단가로 fallback.
+
+    이게 v0.6.2의 silent $0 회귀 핵심 가드 — `Agent(model="sonnet")` 같은 alias는
+    pricing 표에 없으므로 truthy하더라도 부모 단가로 떨어져야 한다.
+    """
+    assert pricing.effective_billing_model("sonnet", "claude-opus-4-7") == "claude-opus-4-7"
+    assert pricing.effective_billing_model("haiku", "claude-opus-4-7") == "claude-opus-4-7"
+    assert pricing.effective_billing_model("opus", "claude-opus-4-7") == "claude-opus-4-7"
+
+
 def test_compute_cost_accepts_subagent_usage():
     """compute_cost는 duck-typing으로 SubagentUsage도 처리해야 한다 (D6 부모 모델 단가 추정 경로).
 
