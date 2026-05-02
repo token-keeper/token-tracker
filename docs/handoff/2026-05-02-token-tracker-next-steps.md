@@ -170,6 +170,27 @@ v0.5.0 원본 MINOR + v0.5.1 PR별 리뷰 MINOR 혼재. SKILL.md 공통 boilerpl
 - 관련 plan: `docs/superpowers/plans/2026-05-02-token-tracker-subagent-tokens.md`.
 - 6 commits: `8bf5bc3` (parser) → `98cdeb4` (aggregator) → `7f5169d` (hook + sidechain.py) → `c48c76f` (state schema v2) → `4ca7569` (detail formatter) → `48e3079` (pricing 회귀).
 
+### F-2. v0.6.0 리뷰 후속 정리 + timing 회귀 fix ✅ 완료 (2026-05-02, v0.6.1)
+
+7개 병렬 코드리뷰(CRITICAL 0)에서 보고된 MAJOR 5건 + 시각 검증 중 발견된 timing 회귀 2건을 같은 브랜치에서 보강했다.
+
+**리뷰 보강 5건:**
+- `eb7a855` refactor(parser): `parse_agent_tool_uses` 헬퍼 추출 — sidechain의 책임 침범 해소 (DRY)
+- `fe23fd9` refactor(parser): `SubagentUsage`의 dead 필드 3개(`agent_id`, `started_at`, `model`) 제거 (YAGNI). `summary_store`는 `**data` 대신 명시적 키 추출 패턴으로 전환해 forward-compat 보존
+- `527e96c` refactor(aggregator): turn+sub 합산을 한 패스로 통합 (`(t, *t.subagents)` 시퀀스)
+- `f1f0372` fix(sidechain): `agent_id` path traversal 가드 — 정규식 `^[A-Za-z0-9_-]+$` + `Path.is_symlink()` 거부 + `resolve().is_relative_to()` defense-in-depth
+- `1b4838f` test: 빈 sidechain dir / 0바이트 jsonl / `subagents=[]` legacy 회귀 가드
+
+**timing 회귀 fix 2건 (시각 검증으로만 발견됨, unit test 못 잡음):**
+- `bff10a7` fix(hook): Stop hook의 flush polling 종료 조건을 `not turns or _missing_fg_match()`로 보강. Agent dispatch가 있는데 매칭 fg_sub이 없으면 100ms × 5회 더 polling. Agent 미호출 turn은 expected가 빈 셋이라 즉시 종료(성능 회귀 0)
+- `f2781ee` fix(aggregator): `_dedupe_by_message_id`가 같은 message_id를 보면 두 번째부터 skip하던 동작이 **`agent_tool_use_ids`도 같이 drop**해서 sub 매칭이 silent fail하던 버그. Claude Code가 한 응답을 thinking/text/tool_use 라인으로 쪼개 같은 msg_id로 쓰는데, 첫 라인(thinking)이 살아남으면 tool_use 라인의 ids가 사라졌음. 이제 같은 msg_id를 만나면 ids만 kept turn에 merge
+
+**follow-up 미처리 (별도 plan 권장):**
+- M4 (orphan 가시화) — 부모 못 찾은 sub을 별도 행/섹션으로 노출 (현재 silent drop)
+- M5 (sidechain offset 캐시) — 매 Stop마다 sidechain jsonl 전체를 재read. 장기 세션에서 측정 후 대응
+
+**최종 신규 테스트 ~47건. 141 → 188 passing.**
+
 ---
 
 ## 6. 사용자 성향 메모 (빠르게 협업하려면 알면 좋음)
@@ -203,7 +224,7 @@ v0.5.0 원본 MINOR + v0.5.1 PR별 리뷰 MINOR 혼재. SKILL.md 공통 boilerpl
 | Claude Code 설치 경로 | `~/.claude/plugins/cache/token-tracker-local/token-tracker/0.1.0/` |
 | state 디렉터리 | `~/.claude/plugins/token-tracker/state/` |
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
-| 최신 태그 | `v0.6.0` (subagent 토큰 표시) |
-| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`), `v0.5.1` (리뷰 MAJOR 회수), `v0.6.0` (subagent 토큰) |
-| 테스트 수 | 176 passing |
+| 최신 태그 | `v0.6.1` (subagent 토큰 + 리뷰 회수 + timing fix) |
+| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`), `v0.5.1` (리뷰 MAJOR 회수), `v0.6.0` (subagent 토큰), `v0.6.1` (리뷰 보강 + timing 회귀 fix) |
+| 테스트 수 | 188 passing |
 | 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |
