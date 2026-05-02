@@ -19,16 +19,25 @@ class Summary:
 def _dedupe_by_message_id(turns: list[TurnUsage]) -> list[TurnUsage]:
     """Claude Code splits a single API response into multiple JSONL lines
     (one per content block: thinking, text, tool_use, etc.) but copies the
-    same `usage` field into each. Count each unique message_id once.
+    same `usage` field into each. Count each unique message_id once, but
+    **merge per-line state that may sit on different blocks** — specifically
+    `agent_tool_use_ids`, which only appears on the tool_use line.
     Turns without a message_id (old fixtures, malformed entries) are kept
     as-is since we cannot identify duplicates."""
-    seen: set[str] = set()
+    kept_by_mid: dict[str, TurnUsage] = {}
     out: list[TurnUsage] = []
     for t in turns:
+        if t.message_id and t.message_id in kept_by_mid:
+            # extend the kept turn's agent_tool_use_ids (preserve order, dedupe ids)
+            kept = kept_by_mid[t.message_id]
+            existing = set(kept.agent_tool_use_ids)
+            for tu_id in t.agent_tool_use_ids:
+                if tu_id and tu_id not in existing:
+                    kept.agent_tool_use_ids.append(tu_id)
+                    existing.add(tu_id)
+            continue
         if t.message_id:
-            if t.message_id in seen:
-                continue
-            seen.add(t.message_id)
+            kept_by_mid[t.message_id] = t
         out.append(t)
     return out
 

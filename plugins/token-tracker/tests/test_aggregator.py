@@ -230,6 +230,36 @@ def test_aggregate_cache_hit_rate_includes_subagent_cache():
     assert math.isclose(s.cache_hit_rate, 900 / 1000)
 
 
+def test_dedupe_merges_agent_tool_use_ids_from_duplicate_message_id():
+    """Claude Code splits a single API response into multiple JSONL lines
+    (thinking, text, tool_use). Each line shares the same message_id but only
+    the tool_use line carries `agent_tool_use_ids`. Dedupe must merge those
+    ids onto the kept turn instead of dropping them silently."""
+    t1 = _mk(input_tokens=1, output_tokens=1, message_id="m1")  # thinking line
+    t2 = _mk(input_tokens=1, output_tokens=1, message_id="m1")  # tool_use line
+    t2.agent_tool_use_ids = ["toolu_X"]
+    out = aggregator._dedupe_by_message_id([t1, t2])
+    assert len(out) == 1
+    assert out[0].agent_tool_use_ids == ["toolu_X"]
+
+
+def test_aggregate_attaches_subagent_when_tool_use_on_separate_line_with_same_msg_id():
+    """End-to-end: parent turn arrives as 2 JSONL lines (same message_id) where
+    only the second line has agent_tool_use_ids. After dedupe-merge, the sub
+    must still attach to the surviving turn and contribute to Summary totals."""
+    t1 = _mk(input_tokens=10, output_tokens=20, message_id="p1")  # thinking
+    t2 = _mk(input_tokens=10, output_tokens=20, message_id="p1")  # tool_use
+    t2.agent_tool_use_ids = ["toolu_X"]
+    sub = _mk_sub(tool_use_id="toolu_X", input_tokens=5, output_tokens=7)
+    s = aggregator.aggregate([t1, t2], elapsed=0.0, subagents=[sub])
+    assert len(s.turns) == 1
+    assert len(s.turns[0].subagents) == 1
+    assert s.turns[0].subagents[0].tool_use_id == "toolu_X"
+    # Summary includes sub: parent input 10 + sub input 5 = 15
+    assert s.total_input_tokens == 15
+    assert s.total_output_tokens == 20 + 7
+
+
 def test_aggregate_total_cost_uses_parent_model_rate_for_subagent():
     """subagent 의 model 이 비어있으면 부모 model 단가로 비용 산정."""
     parent = _mk(
