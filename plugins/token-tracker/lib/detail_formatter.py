@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from lib.aggregator import Summary
 from lib.i18n_loader import load_strings
 from lib.parser import SubagentUsage, TurnUsage
-from lib.pricing import compute_cost
+from lib.pricing import compute_cost, effective_billing_model, is_known_model
 
 
 # Sub-row label prefix for the agent_type. Kept as a module constant rather
@@ -209,11 +209,14 @@ def format_detail(summary: Summary, language: str) -> str:
         # Child rows for subagents under this parent turn.
         for sub in turn.subagents:
             has_subagents = True
-            if not getattr(sub, "model", ""):
+            sub_model = getattr(sub, "model", "")
+            # Treat both empty model and unknown aliases (e.g. "sonnet" from
+            # `Agent(model="sonnet")` dispatch) as "unknown" for the legend
+            # — both billing paths actually use the parent model rate.
+            if not is_known_model(sub_model):
                 has_unknown_sub_model = True
-            # Cost: sub.model preferred when set (matches aggregator behavior);
-            # otherwise fall back to parent model rate.
-            billing_model = getattr(sub, "model", "") or turn.model
+            # Cost: same fallback rule as aggregator (single helper).
+            billing_model = effective_billing_model(sub_model, turn.model)
             sub_cost = f"${compute_cost(billing_model, sub):.4f}"
             sub_cells = [
                 "",  # # column blank for child rows

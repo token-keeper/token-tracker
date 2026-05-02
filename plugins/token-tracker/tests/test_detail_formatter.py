@@ -292,3 +292,28 @@ def test_detail_subagent_cost_uses_sub_model_rate_when_set():
     child_line = next(l for l in out.splitlines() if "└" in l)
     # haiku input rate = $1.0/MTok → $1.0000
     assert "$1.0000" in child_line
+
+
+def test_detail_unknown_sub_model_alias_uses_parent_rate_for_row_cost():
+    """sub.model이 unknown alias('sonnet')면 행 비용도 silent 0이 아니라 부모 단가."""
+    turn = _turn(model="claude-opus-4-7")
+    sub = _sub(input_tokens=1_000_000, output_tokens=0,
+               cache_creation_tokens=0, cache_read_tokens=0)
+    sub.model = "sonnet"  # unknown alias
+    turn.subagents = [sub]
+    out = format_detail(_summary([turn]), "ko")
+    child_line = next(l for l in out.splitlines() if "└" in l)
+    # opus input rate = \$15.0/MTok → \$15.0000 (NOT \$0.0000)
+    assert "$15.0000" in child_line, f"expected parent rate fallback in: {child_line!r}"
+
+
+def test_detail_legend_present_when_sub_model_is_unknown_alias():
+    """sub.model이 unknown alias여도 legend가 표시돼야 한다 (부모 단가 추정 중이므로)."""
+    turn = _turn()
+    sub = _sub(agent_type="general-purpose")
+    sub.model = "sonnet"  # unknown alias — billing falls back to parent
+    turn.subagents = [sub]
+    out_ko = format_detail(_summary([turn]), "ko")
+    assert "subagent 비용은 부모 모델 단가로 추정" in out_ko, (
+        f"unknown alias should trigger legend; got:\n{out_ko}"
+    )
