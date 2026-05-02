@@ -11,6 +11,8 @@
   "col_cost": "비용",
   "col_time": "시간",
   "legend": "범례: cc=cache_creation, cr=cache_read",
+  "subagent_row_prefix": "└ ",
+  "subagent_legend": "* subagent 비용은 부모 모델 단가로 추정",
   "err_no_state": "아직 기록된 request가 없습니다. 먼저 Claude에게 질문 후 다시 실행하세요.",
   "err_parse": "상세 정보를 읽지 못했습니다 (파일 손상).",
   "err_unsupported_schema": "이 state 파일은 현재 skill과 호환되지 않습니다 (삭제 후 다음 응답부터 재생성).",
