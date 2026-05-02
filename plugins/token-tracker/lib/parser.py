@@ -20,6 +20,20 @@ class TurnUsage:
     ended_at: float | None = None  # reserved; currently always None from JSONL
 
 
+@dataclass
+class SubagentUsage:
+    agent_type: str
+    agent_id: str
+    tool_use_id: str
+    input_tokens: int
+    output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
+    model: str = ""
+    total_duration_ms: int = 0
+    started_at: float | None = None
+
+
 def _iso_to_epoch(iso: str) -> float | None:
     if not iso:
         return None
@@ -65,4 +79,116 @@ def parse_line(entry: dict) -> TurnUsage | None:
         timestamp_iso=timestamp_iso,
         message_id=str(msg.get("id", "")),
         started_at=_iso_to_epoch(timestamp_iso),
+    )
+
+
+def _extract_tool_use_id(entry: dict) -> str:
+    """user 라인 message.content 에서 tool_result 블록의 tool_use_id 를 가져온다."""
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return ""
+    content = msg.get("content") or []
+    if not isinstance(content, list):
+        return ""
+    for blk in content:
+        if isinstance(blk, dict) and blk.get("type") == "tool_result":
+            tu_id = blk.get("tool_use_id")
+            if isinstance(tu_id, str) and tu_id:
+                return tu_id
+    return ""
+
+
+def parse_tool_result_for_agent(entry: dict) -> SubagentUsage | None:
+    """foreground (sync) Agent tool 의 completed 결과를 SubagentUsage 로 변환.
+
+    메인 jsonl 의 type=="user" 라인 중 toolUseResult 에 agentType + status=="completed"
+    가 있는 라인만 처리한다. async_launched 등은 None.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("type") != "user":
+        return None
+    tur = entry.get("toolUseResult")
+    if not isinstance(tur, dict):
+        return None
+    agent_type = tur.get("agentType")
+    if not agent_type:
+        return None
+    if tur.get("status") != "completed":
+        return None
+
+    tool_use_id = _extract_tool_use_id(entry)
+    agent_id = tur.get("agentId") or ""
+    usage = tur.get("usage") if isinstance(tur.get("usage"), dict) else {}
+
+    return SubagentUsage(
+        agent_type=str(agent_type),
+        agent_id=str(agent_id),
+        tool_use_id=tool_use_id,
+        input_tokens=int(usage.get("input_tokens", 0)),
+        output_tokens=int(usage.get("output_tokens", 0)),
+        cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
+        cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
+        model="",
+        total_duration_ms=int(tur.get("totalDurationMs", 0) or 0),
+        started_at=_iso_to_epoch(entry.get("timestamp", "")),
+    )
+
+
+def parse_async_launch(entry: dict) -> tuple[str, str] | None:
+    """async Agent tool 호출의 launch 라인에서 (tool_use_id, agent_id) 추출.
+
+    메인 jsonl 의 type=="user" 라인 중 toolUseResult.status=="async_launched" 인 경우만.
+    sidechain jsonl 매칭에 사용된다.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("type") != "user":
+        return None
+    tur = entry.get("toolUseResult")
+    if not isinstance(tur, dict):
+        return None
+    if tur.get("status") != "async_launched":
+        return None
+
+    tool_use_id = _extract_tool_use_id(entry)
+    agent_id = tur.get("agentId") or ""
+    if not tool_use_id or not agent_id:
+        return None
+    return (tool_use_id, str(agent_id))
+
+
+def parse_sidechain_assistant(
+    entry: dict,
+    agent_type: str,
+    agent_id: str,
+    tool_use_id: str,
+) -> SubagentUsage | None:
+    """sidechain jsonl 한 라인에서 SubagentUsage 추출.
+
+    호출자가 해당 파일이 sidechain jsonl 임을 보장해야 한다 (isSidechain 검증 X).
+    type=="assistant" 이고 message.usage 가 dict 일 때만 처리한다.
+    """
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("type") != "assistant":
+        return None
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return None
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    return SubagentUsage(
+        agent_type=agent_type,
+        agent_id=agent_id,
+        tool_use_id=tool_use_id,
+        input_tokens=int(usage.get("input_tokens", 0)),
+        output_tokens=int(usage.get("output_tokens", 0)),
+        cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
+        cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
+        model=str(msg.get("model", "")),
+        total_duration_ms=0,
+        started_at=_iso_to_epoch(entry.get("timestamp", "")),
     )

@@ -121,3 +121,173 @@ def test_parse_invalid_timestamp_leaves_started_at_none():
     }
     t = parser.parse_line(entry)
     assert t.started_at is None
+
+
+# ---------------------------------------------------------------------------
+# SubagentUsage / parse_tool_result_for_agent / parse_async_launch /
+# parse_sidechain_assistant
+# ---------------------------------------------------------------------------
+
+
+def _completed_agent_user_entry():
+    return {
+        "type": "user",
+        "timestamp": "2026-04-23T11:00:00Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_parent_001",
+                    "content": "agent finished",
+                }
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "claude-code-guide",
+            "agentId": "agent-abc-123",
+            "status": "completed",
+            "totalDurationMs": 12345,
+            "totalTokens": 999,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 200,
+                "cache_creation_input_tokens": 50,
+                "cache_read_input_tokens": 1000,
+            },
+        },
+    }
+
+
+def test_parse_tool_result_returns_none_for_assistant_lines():
+    entry = {
+        "type": "assistant",
+        "message": {"id": "m1", "model": "claude-opus-4-7", "usage": {}, "content": []},
+    }
+    assert parser.parse_tool_result_for_agent(entry) is None
+
+
+def test_parse_tool_result_returns_none_when_no_agent_type():
+    entry = {
+        "type": "user",
+        "message": {
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_x", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {"stdout": "hello"},
+    }
+    assert parser.parse_tool_result_for_agent(entry) is None
+
+
+def test_parse_tool_result_extracts_completed_agent_usage():
+    entry = _completed_agent_user_entry()
+    sub = parser.parse_tool_result_for_agent(entry)
+    assert sub is not None
+    assert sub.agent_type == "claude-code-guide"
+    assert sub.agent_id == "agent-abc-123"
+    assert sub.tool_use_id == "toolu_parent_001"
+    assert sub.input_tokens == 100
+    assert sub.output_tokens == 200
+    assert sub.cache_creation_tokens == 50
+    assert sub.cache_read_tokens == 1000
+    assert sub.total_duration_ms == 12345
+    assert sub.model == ""
+    from datetime import datetime, timezone
+    expected = datetime(2026, 4, 23, 11, 0, 0, tzinfo=timezone.utc).timestamp()
+    assert sub.started_at == expected
+
+
+def test_parse_tool_result_returns_none_for_async_launched():
+    entry = {
+        "type": "user",
+        "timestamp": "2026-04-23T11:00:00Z",
+        "message": {
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_async_1", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "claude-code-guide",
+            "agentId": "agent-async-1",
+            "status": "async_launched",
+        },
+    }
+    assert parser.parse_tool_result_for_agent(entry) is None
+
+
+def test_parse_async_launch_extracts_pair():
+    entry = {
+        "type": "user",
+        "timestamp": "2026-04-23T11:00:00Z",
+        "message": {
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_async_1", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "claude-code-guide",
+            "agentId": "agent-async-1",
+            "status": "async_launched",
+        },
+    }
+    pair = parser.parse_async_launch(entry)
+    assert pair == ("toolu_async_1", "agent-async-1")
+
+
+def test_parse_async_launch_returns_none_for_completed():
+    entry = _completed_agent_user_entry()
+    assert parser.parse_async_launch(entry) is None
+
+
+def test_parse_sidechain_assistant_extracts_usage_with_model():
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-04-23T12:34:56Z",
+        "message": {
+            "id": "msg_side_1",
+            "model": "claude-haiku-4-5",
+            "usage": {
+                "input_tokens": 7,
+                "output_tokens": 9,
+                "cache_creation_input_tokens": 11,
+                "cache_read_input_tokens": 13,
+            },
+            "content": [],
+        },
+    }
+    sub = parser.parse_sidechain_assistant(
+        entry,
+        agent_type="claude-code-guide",
+        agent_id="agent-async-1",
+        tool_use_id="toolu_async_1",
+    )
+    assert sub is not None
+    assert sub.agent_type == "claude-code-guide"
+    assert sub.agent_id == "agent-async-1"
+    assert sub.tool_use_id == "toolu_async_1"
+    assert sub.model == "claude-haiku-4-5"
+    assert sub.input_tokens == 7
+    assert sub.output_tokens == 9
+    assert sub.cache_creation_tokens == 11
+    assert sub.cache_read_tokens == 13
+    assert sub.total_duration_ms == 0
+    from datetime import datetime, timezone
+    expected = datetime(2026, 4, 23, 12, 34, 56, tzinfo=timezone.utc).timestamp()
+    assert sub.started_at == expected
+
+
+def test_parse_sidechain_assistant_returns_none_for_user_lines():
+    entry = {
+        "type": "user",
+        "timestamp": "2026-04-23T12:34:56Z",
+        "message": {"content": []},
+    }
+    assert (
+        parser.parse_sidechain_assistant(
+            entry,
+            agent_type="claude-code-guide",
+            agent_id="agent-async-1",
+            tool_use_id="toolu_async_1",
+        )
+        is None
+    )
