@@ -1,7 +1,7 @@
 import math
 
 from lib import pricing
-from lib.parser import TurnUsage
+from lib.parser import SubagentUsage, TurnUsage
 
 
 def test_known_model_cost_opus():
@@ -120,3 +120,32 @@ def test_prefix_match_picks_longest_key():
 def test_is_known_model_accepts_prefix():
     assert pricing.is_known_model("claude-opus-4-7[1m]") is True
     assert pricing.is_known_model("claude-unknown-x") is False
+
+
+def test_compute_cost_accepts_subagent_usage():
+    """compute_cost는 duck-typing으로 SubagentUsage도 처리해야 한다 (D6 부모 모델 단가 추정 경로).
+
+    aggregator는 부모 turn 모델로 SubagentUsage를 합산해 비용을 산정한다 — TurnUsage와
+    같은 4개 토큰 필드를 갖는 객체는 모두 동일한 결과를 내야 한다 (회귀 가드).
+    """
+    sub = SubagentUsage(
+        agent_type="general-purpose",
+        agent_id="abc-123",
+        tool_use_id="toolu_xyz",
+        input_tokens=1_000_000,
+        output_tokens=500_000,
+        cache_creation_tokens=0,
+        cache_read_tokens=2_000_000,
+    )
+    turn = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=1_000_000,
+        output_tokens=500_000,
+        cache_creation_tokens=0,
+        cache_read_tokens=2_000_000,
+    )
+    sub_cost = pricing.compute_cost("claude-opus-4-7", sub)
+    turn_cost = pricing.compute_cost("claude-opus-4-7", turn)
+    assert math.isclose(sub_cost, turn_cost, rel_tol=1e-9)
+    # Sanity: 1M input * $15 + 0.5M output * $75 + 2M cache_read * $1.5 = 15 + 37.5 + 3 = 55.5
+    assert math.isclose(sub_cost, 55.5, rel_tol=1e-9)
