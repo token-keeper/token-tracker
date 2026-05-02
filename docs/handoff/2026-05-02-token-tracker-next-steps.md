@@ -6,9 +6,11 @@
 
 ## 1. 한 줄 요약
 
-token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.6.2** — `/token-detail` sub 행이 `└ sub: general-purpose [sonnet 4.6]`처럼 model까지 표시하고, sub의 model을 알 때는 그 단가로 정확히 비용 산정. 205 tests passing. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력(결정론적, LLM 우회), `/token-detail`로 주문형 조회, `/token-verbose [on|off]`로 verbose 토글 — 모두 slash로 수동 호출 전용(`disable-model-invocation: true`).
+token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.6.2 (CRITICAL+D 보강)** — `/token-detail` sub 행이 `└ sub: general-purpose [sonnet 4.6]`처럼 model까지 표시하고, sub의 model을 알 때는 그 단가로 정확히 비용 산정. unknown alias("sonnet" 등)도 부모 단가로 안전 fallback. async background dispatch가 활성 중이면 매 Stop마다 끼어들지 않고 모두 끝난 시점 1번만 emit. **222 tests passing**. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력(결정론적, LLM 우회), `/token-detail`로 주문형 조회, `/token-verbose [on|off]`로 verbose 토글 — 모두 slash로 수동 호출 전용(`disable-model-invocation: true`).
 
 **v0.6.2 (2026-05-02)**: sub 행이 model 정보까지 노출. async sub은 sidechain `message.model`, foreground sub은 dispatch 시 `input.model`. 둘 다 모르면 부모 단가 fallback + legend 안내. 모든 sub model이 알려지면 정확 비용이라 legend 생략. 188 → 205 tests.
+
+**v0.6.2 보강 (T13, 2026-05-02 같은 날)**: 머지 차단 CRITICAL + UX 개선 D 옵션. 205 → 222 tests.
 
 ---
 
@@ -212,6 +214,26 @@ v0.6.1까지는 sub 행이 `└ general-purpose`처럼 agent_type만 보였고, 
 
 **i18n:** `subagent_row_label`은 i18n 키로 두지 않고 `_SUB_LABEL = "sub:"` 모듈 상수로 처리 (ko/en 둘 다 동일이라 KISS). `subagent_row_prefix`(`└ `), `subagent_legend`는 그대로.
 
+#### F-3 보강 (T13, 같은 v0.6.2): CRITICAL silent $0 회귀 + D 옵션
+
+**CRITICAL fix (silent $0 회귀):** 사용자가 `Agent(model="sonnet")` 같은 short alias로 dispatch하면 parser가 `sub.model="sonnet"`을 채움. 기존 `billing_model = sub.model or parent.model` 패턴은 `"sonnet"` truthy라 부모 fallback이 안 되고 그대로 `compute_cost("sonnet", sub)`에 전달 → `_resolve_rates("sonnet")` None → **0.0 silent return**. 즉 v0.6.1의 부모 단가 추정보다 부정확한 회귀(sub 비용 무음 $0).
+
+수정:
+- `lib/pricing.py`에 `effective_billing_model(sub_model, parent_model)` 단일 헬퍼 추출. known pricing key prefix match만 통과시키고 그 외 truthy 값(unknown alias)은 부모 단가로 fallback.
+- `lib/aggregator.py` + `lib/detail_formatter.py`가 같은 헬퍼 호출 (DRY).
+- `lib/detail_formatter.py`의 legend 트리거 조건을 `not is_known_model(sub.model)`로 강화. 빈 문자열뿐 아니라 unknown alias도 "추정" 안내가 뜬다.
+- 풀체인 e2e 회귀 가드 1건 (`test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate`).
+
+**D 옵션 (async background UX):** 사용자가 `run_in_background: true`로 N개 dispatch → 결과가 점차 도착하며 메인이 매번 응답 → 매 응답 끝 Stop hook이 token-tracker 한 줄 요약 emit → 사용자에게 매번 끼어드는 UX 문제.
+
+수정:
+- `lib/sidechain.py`에 `count_active_async_agents(entries) -> int` 추가. `extract_async_launches`로 launched agent_id 집합 + 메인 jsonl의 `<task-notification><status>completed</status>` XML(또는 `attachment.type=queued_command`)에서 완료 agent_id 집합. 차집합 크기.
+- `hooks/on_stop.py`에서 active > 0이면 `_emit` 생략하고 `return 0`. last_summary는 그 직전에 이미 저장됐으므로 활성 중에도 누적치는 보존되고, 모두 끝난 시점 Stop에서 정상 emit.
+- verbose 모드(config.verbose=true 또는 TOKEN_TRACKER_VERBOSE=1)는 debug 용도라 active 무시하고 매번 emit.
+- 단위 테스트 6건 + e2e 4건 추가 (`tests/test_sidechain.py`, `tests/test_hook_end_to_end.py`).
+
+**신규 테스트 +17. 205 → 222 passing.**
+
 ---
 
 ## 6. 사용자 성향 메모 (빠르게 협업하려면 알면 좋음)
@@ -247,5 +269,5 @@ v0.6.1까지는 sub 행이 `└ general-purpose`처럼 agent_type만 보였고, 
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
 | 최신 태그 | `v0.6.2` (sub 행 model 표시 + 정확 비용) |
 | 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`), `v0.5.1` (리뷰 MAJOR 회수), `v0.6.0` (subagent 토큰), `v0.6.1` (리뷰 보강 + timing 회귀 fix), `v0.6.2` (sub 모델 표시 + 정확 비용) |
-| 테스트 수 | 205 passing |
+| 테스트 수 | 222 passing (T13 CRITICAL+D 보강 후) |
 | 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |
