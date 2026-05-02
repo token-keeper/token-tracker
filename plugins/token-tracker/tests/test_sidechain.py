@@ -415,6 +415,137 @@ def test_collect_sidechain_uses_assistant_model_first(tmp_path):
     assert by_tu["toolu_n"].model == "claude-sonnet-4-6"
 
 
+# ---------------------------------------------------------------------------
+# count_active_async_agents (D 옵션 — async 활성 중에는 Stop 출력 silent)
+# ---------------------------------------------------------------------------
+
+
+def _async_launch(tu_id: str, agent_id: str, agent_type: str = "general-purpose") -> list[dict]:
+    """async dispatch 한 묶음: assistant tool_use + user async_launched."""
+    return [
+        {
+            "type": "assistant",
+            "message": {
+                "id": f"msg_{agent_id}",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tu_id,
+                        "name": "Agent",
+                        "input": {"subagent_type": agent_type},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "tool_result", "tool_use_id": tu_id, "content": "launched"}
+                ],
+            },
+            "toolUseResult": {
+                "agentType": agent_type,
+                "agentId": agent_id,
+                "status": "async_launched",
+            },
+        },
+    ]
+
+
+def _completion_notification(agent_id: str) -> dict:
+    """task-notification XML for a completed async agent (queue-operation 라인)."""
+    return {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": (
+                f"<task-notification>"
+                f"<task-id>{agent_id}</task-id>"
+                f"<status>completed</status>"
+                f"</task-notification>"
+            ),
+        },
+    }
+
+
+def test_count_active_async_agents_returns_zero_when_no_launches():
+    entries = [
+        {"type": "user", "message": {"role": "user", "content": "hi"}},
+    ]
+    assert sidechain.count_active_async_agents(entries) == 0
+
+
+def test_count_active_async_agents_counts_pending_launches():
+    """launch만 있고 completed 알림 없으면 그 수만큼 active."""
+    entries = []
+    entries.extend(_async_launch("toolu_1", "agent-aaa"))
+    entries.extend(_async_launch("toolu_2", "agent-bbb"))
+    entries.extend(_async_launch("toolu_3", "agent-ccc"))
+    assert sidechain.count_active_async_agents(entries) == 3
+
+
+def test_count_active_async_agents_subtracts_completions():
+    """active = launched - completed. 완료 알림이 있으면 그만큼 빠진다."""
+    entries = []
+    entries.extend(_async_launch("toolu_1", "agent-aaa"))
+    entries.extend(_async_launch("toolu_2", "agent-bbb"))
+    entries.extend(_async_launch("toolu_3", "agent-ccc"))
+    # 1, 3 완료
+    entries.append(_completion_notification("agent-aaa"))
+    entries.append(_completion_notification("agent-ccc"))
+    assert sidechain.count_active_async_agents(entries) == 1
+
+
+def test_count_active_async_agents_returns_zero_when_all_complete():
+    entries = []
+    entries.extend(_async_launch("toolu_1", "agent-aaa"))
+    entries.append(_completion_notification("agent-aaa"))
+    assert sidechain.count_active_async_agents(entries) == 0
+
+
+def test_count_active_async_agents_recognizes_attachment_queued_command():
+    """attachment.type=='queued_command' + queued_command.content가 task-notification XML.
+
+    Claude Code는 queue-operation 라인 외에도 attachment 형태로 같은 알림을 흘릴 수 있다.
+    두 형태 모두 지원해야 한다.
+    """
+    entries = []
+    entries.extend(_async_launch("toolu_1", "agent-zzz"))
+    entries.append({
+        "type": "attachment",
+        "attachment": {
+            "type": "queued_command",
+            "content": (
+                "<task-notification>"
+                "<task-id>agent-zzz</task-id>"
+                "<status>completed</status>"
+                "</task-notification>"
+            ),
+        },
+    })
+    assert sidechain.count_active_async_agents(entries) == 0
+
+
+def test_count_active_async_agents_ignores_non_completed_status():
+    """status != completed 알림은 아직 끝나지 않은 것으로 간주."""
+    entries = []
+    entries.extend(_async_launch("toolu_1", "agent-aaa"))
+    entries.append({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": (
+                "<task-notification>"
+                "<task-id>agent-aaa</task-id>"
+                "<status>running</status>"
+                "</task-notification>"
+            ),
+        },
+    })
+    assert sidechain.count_active_async_agents(entries) == 1
+
+
 def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):
     sub_dir = tmp_path / "sess" / "subagents"
     sub_dir.mkdir(parents=True)

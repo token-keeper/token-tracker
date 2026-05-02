@@ -73,6 +73,76 @@ def extract_async_launches(
     return out
 
 
+# task-notification XML matcher: extract task-id only when status is completed.
+# Tolerates whitespace and arbitrary order of <task-id>/<status>.
+_COMPLETED_TASK_RE = re.compile(
+    r"<task-notification\b[^>]*>(?P<body>.*?)</task-notification>",
+    re.DOTALL,
+)
+_TASK_ID_RE = re.compile(r"<task-id>\s*([A-Za-z0-9_-]+)\s*</task-id>")
+_STATUS_COMPLETED_RE = re.compile(r"<status>\s*completed\s*</status>", re.IGNORECASE)
+
+
+def _completed_agent_ids_in_text(text: str) -> list[str]:
+    """task-notification XML 텍스트에서 status=completed인 task-id 들을 모두 추출."""
+    out: list[str] = []
+    for m in _COMPLETED_TASK_RE.finditer(text):
+        body = m.group("body")
+        if not _STATUS_COMPLETED_RE.search(body):
+            continue
+        tid = _TASK_ID_RE.search(body)
+        if tid:
+            out.append(tid.group(1))
+    return out
+
+
+def _completed_agent_ids(entry: dict) -> list[str]:
+    """엔트리에서 task-notification status=completed의 task-id 집합.
+
+    두 가지 형태 모두 지원:
+      1) type=="user", message.content가 task-notification XML 텍스트
+         (queue-operation으로 흘러온 알림)
+      2) type=="attachment", attachment.type=="queued_command", content가 같은 XML
+    """
+    if not isinstance(entry, dict):
+        return []
+    # Form 1: queue-operation / user line with XML text content
+    msg = entry.get("message")
+    if isinstance(msg, dict):
+        content = msg.get("content")
+        if isinstance(content, str) and "<task-notification" in content:
+            return _completed_agent_ids_in_text(content)
+    # Form 2: attachment with queued_command
+    attachment = entry.get("attachment")
+    if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+        content = attachment.get("content")
+        if isinstance(content, str) and "<task-notification" in content:
+            return _completed_agent_ids_in_text(content)
+    return []
+
+
+def count_active_async_agents(entries: list[dict]) -> int:
+    """현재 launch됐지만 아직 completed 알림이 없는 async agent 수.
+
+    Stop hook에서 활성 background agent가 1개라도 있으면 출력 silent 처리에
+    사용된다. 시각적으로: 7개 background dispatch → 7개 모두 끝날 때까지 token-tracker
+    한 줄 요약은 안 보이고, 마지막에 1번만 emit.
+
+    Args:
+        entries: 메인 jsonl 엔트리 리스트 (Stop hook이 _read_tail로 읽은 것)
+
+    Returns:
+        len(launched_agent_ids - completed_agent_ids)
+    """
+    launches = extract_async_launches(entries)
+    launched_ids = set(launches.keys())
+    completed_ids: set[str] = set()
+    for e in entries:
+        for aid in _completed_agent_ids(e):
+            completed_ids.add(aid)
+    return len(launched_ids - completed_ids)
+
+
 def collect_sidechain_subagents(
     sidechain_dir: Path,
     launches: dict[str, tuple[str, str, str]],
