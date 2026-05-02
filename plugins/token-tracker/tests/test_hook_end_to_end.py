@@ -344,6 +344,202 @@ def test_stop_polls_for_delayed_flush(tmp_path):
     assert toks > 0, f"polling should have caught the delayed assistant line, got {toks} toks in: {msg!r}"
 
 
+def test_stop_polls_until_subagent_result_lands(tmp_path):
+    """Agent dispatch turn: assistant 라인은 이미 jsonl에 있지만 subagent의
+    tool_result(toolUseResult.status=="completed") 라인은 아직 flush 전.
+    polling 조건이 'turns가 비었을 때'만이면 turns≥1이라 즉시 종료 → fg sub drop.
+    polling을 sub 매칭 미완에도 적용하면 backgrounded writer가 라인을 append할 때까지
+    기다렸다가 sub usage를 합산해야 한다."""
+    import threading
+    import time as _time
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_X",
+                    "name": "Agent",
+                    "input": {"subagent_type": "claude-code-guide"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    delayed_tool_result = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_X", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "claude-code-guide",
+            "status": "completed",
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+            "totalDurationMs": 5000,
+        },
+    }
+
+    # Step 1: only the user line at UserPromptSubmit time
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    payload = {
+        "session_id": "poll-sub",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    # Step 2: append the assistant turn now (turns≥1 immediately on Stop read)
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+
+    # Step 3: writer thread appends the sub tool_result after 200ms — within
+    # polling window (5×100ms = 500ms).
+    def _delayed_append():
+        _time.sleep(0.2)
+        with session_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(delayed_tool_result) + "\n")
+
+    t = threading.Thread(target=_delayed_append)
+    t.start()
+    try:
+        payload["hook_event_name"] = "Stop"
+        r = _run("on_stop.py", payload, env)
+    finally:
+        t.join()
+
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+
+    # Expected: main(50+10=60) + sub(1000+200=1200) = 1260 toks.
+    # If polling stopped early on turns≥1 only, sub would be dropped → 60 toks.
+    import re
+    m = re.search(r"([\d,]+) toks", msg)
+    assert m, f"expected 'N toks' in output, got: {msg!r}"
+    toks = int(m.group(1).replace(",", ""))
+    assert toks == 1260, (
+        f"polling should have waited for sub tool_result; expected 1260 toks, "
+        f"got {toks} in: {msg!r}"
+    )
+
+
+def test_stop_returns_after_max_polls_when_subagent_never_arrives(tmp_path):
+    """assistant 라인의 Agent tool_use가 있어도 sub 결과가 영영 안 들어오면
+    hook은 ~500ms (5×100ms) 안에 종료해야 한다 (무한 대기 X). systemMessage는
+    메인 turn만 출력 — sub 0건 graceful degradation."""
+    import time as _time
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_NEVER",
+                    "name": "Agent",
+                    "input": {"subagent_type": "claude-code-guide"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    payload = {
+        "session_id": "poll-nobody",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    start = _time.time()
+    r = _run("on_stop.py", payload, env)
+    elapsed = _time.time() - start
+
+    assert r.returncode == 0, r.stderr
+    # 500ms polling cap + subprocess overhead. Generous upper bound: 3s.
+    # The test's value is the < ∞ check — confirm bounded.
+    assert elapsed < 3.0, f"hook took {elapsed:.2f}s — polling cap not enforced"
+
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+    import re
+    m = re.search(r"([\d,]+) toks", msg)
+    assert m, f"expected 'N toks' in output, got: {msg!r}"
+    toks = int(m.group(1).replace(",", ""))
+    # Sub never landed → only main(60) counted; graceful degradation.
+    assert toks == 60, f"expected main-only 60 toks, got {toks} in: {msg!r}"
+
+
 def test_sidechain_async_subagent_tokens_included_in_summary(tmp_path):
     """When the transcript launches an async Agent and a sidechain jsonl exists,
     the Stop hook must read the sidechain assistant turns and include their
