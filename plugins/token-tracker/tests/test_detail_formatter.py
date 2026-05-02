@@ -214,3 +214,81 @@ def test_detail_table_alignment_with_subagent_rows():
     parent_row = next(l for l in body_rows if "opus" in l and "└" not in l)
     child_row = next(l for l in body_rows if "└" in l)
     assert visual_width(parent_row) == visual_width(child_row)
+
+
+# ---------------------------------------------------------------------------
+# T12: sub 행 model 표시 + 정확 비용
+# ---------------------------------------------------------------------------
+
+
+def test_subagent_row_shows_model_in_brackets():
+    """sub.model이 채워진 경우 행 라벨이 'sub: {agent_type} [{short}]' 형식이어야 한다."""
+    turn = _turn()
+    turn.subagents = [_sub(agent_type="general-purpose")]
+    turn.subagents[0].model = "claude-sonnet-4-6"
+    out = format_detail(_summary([turn]), "ko")
+    child_line = next(l for l in out.splitlines() if "└" in l)
+    assert "sub: general-purpose" in child_line
+    assert "[sonnet 4.6]" in child_line
+
+
+def test_subagent_row_omits_brackets_when_model_unknown():
+    """sub.model이 빈 문자열이면 대괄호 영역 자체가 출력되지 않아야 한다."""
+    turn = _turn()
+    turn.subagents = [_sub(agent_type="general-purpose")]
+    turn.subagents[0].model = ""
+    out = format_detail(_summary([turn]), "ko")
+    child_line = next(l for l in out.splitlines() if "└" in l)
+    assert "sub: general-purpose" in child_line
+    assert "[" not in child_line
+
+
+def test_legend_omitted_when_all_sub_models_known():
+    """모든 sub model이 알려진 경우 sub legend(추정 안내)는 출력되지 않는다."""
+    turn = _turn()
+    sub = _sub(agent_type="general-purpose")
+    sub.model = "claude-haiku-4-5"
+    turn.subagents = [sub]
+    out_ko = format_detail(_summary([turn]), "ko")
+    assert "subagent 비용은 부모 모델 단가로 추정" not in out_ko
+    out_en = format_detail(_summary([turn]), "en")
+    assert "estimated using parent model rate" not in out_en
+
+
+def test_legend_present_when_any_sub_model_unknown():
+    """하나라도 model이 비면 legend(추정 안내)는 표시된다."""
+    turn = _turn()
+    s1 = _sub(agent_type="agent-a", tool_use_id="tu-a")
+    s1.model = "claude-haiku-4-5"
+    s2 = _sub(agent_type="agent-b", tool_use_id="tu-b")
+    s2.model = ""  # unknown
+    turn.subagents = [s1, s2]
+    out = format_detail(_summary([turn]), "ko")
+    assert "subagent 비용은 부모 모델 단가로 추정" in out
+
+
+def test_short_model_name_normalizes_known_ids():
+    from lib.detail_formatter import _short_model_name
+
+    assert _short_model_name("claude-opus-4-7") == "opus 4.7"
+    assert _short_model_name("claude-opus-4-7[1m]") == "opus 4.7"
+    assert _short_model_name("claude-sonnet-4-6") == "sonnet 4.6"
+    assert _short_model_name("claude-sonnet-4-6-20250101") == "sonnet 4.6"
+    assert _short_model_name("claude-haiku-4-5-20251001") == "haiku 4.5"
+    # unknown → original
+    assert _short_model_name("some-other-model") == "some-other-model"
+    # empty → empty
+    assert _short_model_name("") == ""
+
+
+def test_detail_subagent_cost_uses_sub_model_rate_when_set():
+    """sub.model이 있으면 표시 비용도 sub 단가 기준."""
+    turn = _turn(model="claude-opus-4-7")
+    sub = _sub(input_tokens=1_000_000, output_tokens=0,
+               cache_creation_tokens=0, cache_read_tokens=0)
+    sub.model = "claude-haiku-4-5"
+    turn.subagents = [sub]
+    out = format_detail(_summary([turn]), "ko")
+    child_line = next(l for l in out.splitlines() if "└" in l)
+    # haiku input rate = $1.0/MTok → $1.0000
+    assert "$1.0000" in child_line
