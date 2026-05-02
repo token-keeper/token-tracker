@@ -66,33 +66,26 @@ def aggregate(
     if subagents:
         _attach_subagents(unique, subagents)
 
-    # Per-turn main cost.
-    total_cost = sum(compute_cost(t.model, t) for t in unique)
-    # Subagent cost: bill against parent's model rates (D6) — sub.model may be
-    # empty (foreground tool_result case) and even when present we currently
-    # treat the parent model as the source of truth for billing.
+    # Single-pass accumulation across each turn and its attached subagents.
+    # Subagents are billed at the parent turn's model rate (D6) — sub has no
+    # model field, the parent is the source of truth for billing. Input-side
+    # total includes cache_creation so displayed "toks" matches what the cost
+    # number actually bills for (otherwise a big cache warmup shows tiny toks
+    # with a large cost, which looks wrong).
+    total_cost = 0.0
+    total_input = 0
+    total_output = 0
+    cache_read = 0
     for t in unique:
-        for sub in t.subagents:
-            total_cost += compute_cost(t.model, sub)
-
-    # Include cache_creation in the input-side total so displayed "toks" matches
-    # what the cost number actually bills for (otherwise a big cache warmup
-    # shows tiny toks with a large cost, which looks wrong).
-    total_input = sum(
-        t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens
-        for t in unique
-    )
-    total_output = sum(t.output_tokens for t in unique)
-    cache_read = sum(t.cache_read_tokens for t in unique)
-
-    # Add subagent contributions.
-    for t in unique:
-        for sub in t.subagents:
+        for item in (t, *t.subagents):
+            total_cost += compute_cost(t.model, item)
             total_input += (
-                sub.input_tokens + sub.cache_creation_tokens + sub.cache_read_tokens
+                item.input_tokens
+                + item.cache_creation_tokens
+                + item.cache_read_tokens
             )
-            total_output += sub.output_tokens
-            cache_read += sub.cache_read_tokens
+            total_output += item.output_tokens
+            cache_read += item.cache_read_tokens
 
     cache_hit_rate = (cache_read / total_input) if total_input > 0 else 0.0
 
