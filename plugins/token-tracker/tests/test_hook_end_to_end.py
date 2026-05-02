@@ -665,6 +665,190 @@ def test_sidechain_async_subagent_tokens_included_in_summary(tmp_path):
     )
 
 
+def test_foreground_sub_model_filled_from_tool_use_input(tmp_path):
+    """foreground sub은 메인 jsonl의 Agent tool_use input.model에서 model이
+    채워져 last_summary.json에 저장돼야 한다."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_FG",
+                    "name": "Agent",
+                    "input": {
+                        "subagent_type": "general-purpose",
+                        "model": "claude-haiku-4-5",  # explicit dispatch model
+                    },
+                }
+            ],
+            "usage": {
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    fg_tool_result = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_FG", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "usage": {
+                "input_tokens": 100, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "totalDurationMs": 5000,
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    session_id = "fg-model"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+        f.write(json.dumps(fg_tool_result) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    data = json.loads(summary_file.read_text(encoding="utf-8"))
+    turns = data["summary"]["turns"]
+    assert len(turns) == 1
+    subs = turns[0]["subagents"]
+    assert len(subs) == 1
+    assert subs[0]["model"] == "claude-haiku-4-5"
+
+
+def test_systemMessage_omits_legend_when_all_subs_have_model(tmp_path):
+    """모든 sub의 model이 알려져 있으면 verbose 표 footer에 sub legend가 출력되지 않아야 한다."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_FG2",
+                    "name": "Agent",
+                    "input": {
+                        "subagent_type": "general-purpose",
+                        "model": "claude-haiku-4-5",
+                    },
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    fg_tool_result = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_FG2", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "usage": {
+                "input_tokens": 100, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "totalDurationMs": 5000,
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"
+
+    payload = {
+        "session_id": "no-legend",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+        f.write(json.dumps(fg_tool_result) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+    # ko legend text — should NOT appear when all sub models known
+    assert "subagent 비용은 부모 모델 단가로 추정" not in msg, (
+        f"legend should be omitted when all sub models known; got: {msg!r}"
+    )
+
+
 def test_error_path_emits_diagnostic(tmp_path):
     """An exception inside the hook should still produce a systemMessage and exit 0."""
     fake_home = tmp_path / "home"

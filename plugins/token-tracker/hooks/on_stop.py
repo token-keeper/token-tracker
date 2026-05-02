@@ -68,7 +68,11 @@ def main() -> int:
             return 0
 
         from lib.state import load_state
-        from lib.parser import parse_line, parse_tool_result_for_agent
+        from lib.parser import (
+            parse_agent_tool_uses,
+            parse_line,
+            parse_tool_result_for_agent,
+        )
         from lib.aggregator import aggregate
         from lib.formatter import format_summary
         from lib.sidechain import (
@@ -127,6 +131,18 @@ def main() -> int:
             launches = extract_async_launches(entries)
             if launches:
                 async_subs = collect_sidechain_subagents(sidechain_dir, launches)
+
+        # Foreground subs only have model info on the dispatching tool_use line.
+        # Walk every assistant entry once, build {tool_use_id: model}, and fill
+        # any fg_sub whose model is still empty.
+        tu_to_model: dict[str, str] = {}
+        for e in entries:
+            for tu_id, _t, model in parse_agent_tool_uses(e):
+                if model and tu_id not in tu_to_model:
+                    tu_to_model[tu_id] = model
+        for s in fg_subs:
+            if not s.model and s.tool_use_id in tu_to_model:
+                s.model = tu_to_model[s.tool_use_id]
 
         elapsed = max(0.0, time.time() - started_at)
         summary = aggregate(turns, elapsed=elapsed, subagents=fg_subs + async_subs)
