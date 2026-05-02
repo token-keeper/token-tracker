@@ -6,9 +6,9 @@
 
 ## 1. 한 줄 요약
 
-token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.6.0** — `/token-detail`이 subagent(foreground+async) 토큰까지 계층 행(└)으로 표시. 176 tests passing. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력(결정론적, LLM 우회), `/token-detail`로 주문형 조회, `/token-verbose [on|off]`로 verbose 토글 — 모두 slash로 수동 호출 전용(`disable-model-invocation: true`).
+token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.6.2** — `/token-detail` sub 행이 `└ sub: general-purpose [sonnet 4.6]`처럼 model까지 표시하고, sub의 model을 알 때는 그 단가로 정확히 비용 산정. 205 tests passing. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력(결정론적, LLM 우회), `/token-detail`로 주문형 조회, `/token-verbose [on|off]`로 verbose 토글 — 모두 slash로 수동 호출 전용(`disable-model-invocation: true`).
 
-**v0.6.0 (2026-05-02)**: `/token-detail` 표가 부모 turn 행 직후 `└ {agent_type}` 들여쓰기 행으로 subagent의 토큰·비용까지 함께 보여준다. foreground subagent(메인 jsonl `toolUseResult`)와 async subagent(sidechain jsonl) 양쪽 통합. schema_version 1 → 2 bump (v1 파일은 자동 normalize). 141 → 176 tests.
+**v0.6.2 (2026-05-02)**: sub 행이 model 정보까지 노출. async sub은 sidechain `message.model`, foreground sub은 dispatch 시 `input.model`. 둘 다 모르면 부모 단가 fallback + legend 안내. 모든 sub model이 알려지면 정확 비용이라 legend 생략. 188 → 205 tests.
 
 ---
 
@@ -191,6 +191,27 @@ v0.5.0 원본 MINOR + v0.5.1 PR별 리뷰 MINOR 혼재. SKILL.md 공통 boilerpl
 
 **최종 신규 테스트 ~47건. 141 → 188 passing.**
 
+### F-3. sub 행에 model 표시 + 정확 비용 ✅ 완료 (2026-05-02, v0.6.2)
+
+v0.6.1까지는 sub 행이 `└ general-purpose`처럼 agent_type만 보였고, sub 비용은 항상 부모 model 단가로 추정했다. 실제로는 sub이 다른 model로 돌아도 (예: opus 부모 + haiku sub) 모두 opus 단가로 비용이 산출돼 부정확했다.
+
+**모델 정보 source 우선순위 (높음 → 낮음):**
+1. async sub — sidechain jsonl `assistant.message.model` (가장 정확)
+2. foreground sub — 메인 jsonl `Agent` tool_use `input.model` (caller가 dispatch 시 명시한 경우만)
+3. 모름 — 빈 문자열 → 부모 단가 fallback + footer legend 표시
+
+**변경 사항:**
+- `lib/parser.py`: `SubagentUsage.model` 필드 부활. `parse_agent_tool_uses`가 `(tool_use_id, subagent_type, model)` 트리플 반환. `parse_sidechain_assistant`가 `message.model`을 SubagentUsage에 채움.
+- `lib/sidechain.py`: `extract_async_launches`가 `{agent_id: (tool_use_id, agent_type, model)}` 매핑 반환. `collect_sidechain_subagents`는 sidechain `message.model` 우선, 없을 때만 launch model로 fallback.
+- `hooks/on_stop.py`: 메인 jsonl entries를 walk해 `{tool_use_id: model}` 룩업을 만들고 fg_subs 중 model이 빈 것을 채움.
+- `lib/aggregator.py`: 비용 계산 시 `billing_model = sub.model or parent.model` — sub model이 알려지면 정확 단가로, 모르면 부모 단가로 fallback.
+- `lib/detail_formatter.py`: sub 행 라벨 `└ sub: general-purpose [sonnet 4.6]` 형식. `_short_model_name` 헬퍼가 `claude-{family}-{major}-{minor}[-suffix]` 정규식으로 `opus 4.7`/`sonnet 4.6`/`haiku 4.5` 압축 표기. footer legend(`* subagent 비용은 부모 모델 단가로 추정`)는 model을 모르는 sub이 1개라도 있을 때만 출력 — 전부 알면 정확 비용이라 안내 생략.
+- `lib/summary_store.py`: `_SUB_KEYS`에 `"model"` 추가해 v2 파일에 직렬화. schema_version은 2 유지 (v2 안의 minor 정리). 기존 v2 파일은 `model` 키가 없어도 default `""`로 정상 로드.
+
+**신규 테스트 ~12건. 188 → 205 passing.**
+
+**i18n:** `subagent_row_label`은 i18n 키로 두지 않고 `_SUB_LABEL = "sub:"` 모듈 상수로 처리 (ko/en 둘 다 동일이라 KISS). `subagent_row_prefix`(`└ `), `subagent_legend`는 그대로.
+
 ---
 
 ## 6. 사용자 성향 메모 (빠르게 협업하려면 알면 좋음)
@@ -224,7 +245,7 @@ v0.5.0 원본 MINOR + v0.5.1 PR별 리뷰 MINOR 혼재. SKILL.md 공통 boilerpl
 | Claude Code 설치 경로 | `~/.claude/plugins/cache/token-tracker-local/token-tracker/0.1.0/` |
 | state 디렉터리 | `~/.claude/plugins/token-tracker/state/` |
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
-| 최신 태그 | `v0.6.1` (subagent 토큰 + 리뷰 회수 + timing fix) |
-| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`), `v0.5.1` (리뷰 MAJOR 회수), `v0.6.0` (subagent 토큰), `v0.6.1` (리뷰 보강 + timing 회귀 fix) |
-| 테스트 수 | 188 passing |
+| 최신 태그 | `v0.6.2` (sub 행 model 표시 + 정확 비용) |
+| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`), `v0.5.1` (리뷰 MAJOR 회수), `v0.6.0` (subagent 토큰), `v0.6.1` (리뷰 보강 + timing 회귀 fix), `v0.6.2` (sub 모델 표시 + 정확 비용) |
+| 테스트 수 | 205 passing |
 | 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |
