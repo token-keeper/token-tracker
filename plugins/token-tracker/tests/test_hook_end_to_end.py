@@ -849,6 +849,302 @@ def test_systemMessage_omits_legend_when_all_subs_have_model(tmp_path):
     )
 
 
+def test_stop_silent_when_async_agents_still_active(tmp_path):
+    """async background dispatch가 활성 중이면 systemMessage emit 생략 (옵션 D).
+
+    fixture: async_launched 라인 1개 + completed 알림 0개 → active=1 →
+    Stop hook은 stdout이 비어있어야 한다 (또는 systemMessage 없음).
+    단 last_summary는 여전히 저장돼서 active=0 시점의 emit이 누적치를 보여주도록.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BG",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BG", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bg-1",
+            "status": "async_launched",
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    # verbose off — silent path
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    session_id = "active-bg"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    # Silent: either empty stdout, or JSON without systemMessage
+    if r.stdout.strip():
+        out = json.loads(r.stdout)
+        assert "systemMessage" not in out or not out.get("systemMessage"), (
+            f"expected silent output while async agents active, got: {r.stdout!r}"
+        )
+
+    # last_summary는 그대로 저장돼야 한다 — emit만 silent.
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert summary_file.is_file(), (
+        "last_summary should still be persisted while async active"
+    )
+
+
+def test_stop_emits_when_all_async_agents_done(tmp_path):
+    """모든 async agent가 completed면 정상 emit (active=0)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BG2",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BG2", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bg-2",
+            "status": "async_launched",
+        },
+    }
+    completion_notification = {
+        "type": "user",
+        "uuid": "u-3",
+        "timestamp": "2026-04-23T10:00:10.000Z",
+        "message": {
+            "role": "user",
+            "content": (
+                "<task-notification>"
+                "<task-id>agent-bg-2</task-id>"
+                "<status>completed</status>"
+                "</task-notification>"
+            ),
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    payload = {
+        "session_id": "all-done",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+        f.write(json.dumps(completion_notification) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out.get("systemMessage", "")
+    assert "toks" in msg, f"expected normal emit when all async done, got: {msg!r}"
+
+
+def test_stop_emits_normally_when_no_async_dispatch(tmp_path):
+    """async dispatch가 아예 없는 일반 sync turn은 그대로 매번 emit (현재 동작 유지)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_bytes(FIXTURE.read_bytes())
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    payload = {
+        "session_id": "no-async",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "Stop",
+    }
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out.get("systemMessage", "")
+    assert "toks" in msg, f"sync-only stop should emit normally, got: {msg!r}"
+
+
+def test_stop_emits_in_verbose_even_when_async_active(tmp_path):
+    """verbose 모드는 debug용이라 active background가 있어도 silent 처리하지 않는다."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BG3",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BG3", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bg-3",
+            "status": "async_launched",
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"  # debug 용도 — silent 안 함
+
+    payload = {
+        "session_id": "verbose-bg",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out.get("systemMessage", "")
+    assert "toks" in msg, f"verbose should still emit; got: {msg!r}"
+
+
 def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
     """v0.6.2 CRITICAL 회귀 가드.
 
