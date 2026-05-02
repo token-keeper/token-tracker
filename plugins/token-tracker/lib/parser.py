@@ -28,15 +28,12 @@ class TurnUsage:
 @dataclass
 class SubagentUsage:
     agent_type: str
-    agent_id: str
     tool_use_id: str
     input_tokens: int
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
-    model: str = ""
     total_duration_ms: int = 0
-    started_at: float | None = None
 
 
 def _iso_to_epoch(iso: str) -> float | None:
@@ -161,20 +158,16 @@ def parse_tool_result_for_agent(entry: dict) -> SubagentUsage | None:
         return None
 
     tool_use_id = _extract_tool_use_id(entry)
-    agent_id = tur.get("agentId") or ""
     usage = tur.get("usage") if isinstance(tur.get("usage"), dict) else {}
 
     return SubagentUsage(
         agent_type=str(agent_type),
-        agent_id=str(agent_id),
         tool_use_id=tool_use_id,
         input_tokens=int(usage.get("input_tokens", 0)),
         output_tokens=int(usage.get("output_tokens", 0)),
         cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
-        model="",
         total_duration_ms=int(tur.get("totalDurationMs", 0) or 0),
-        started_at=_iso_to_epoch(entry.get("timestamp", "")),
     )
 
 
@@ -204,7 +197,6 @@ def parse_async_launch(entry: dict) -> tuple[str, str] | None:
 def parse_sidechain_assistant(
     entry: dict,
     agent_type: str,
-    agent_id: str,
     tool_use_id: str,
 ) -> SubagentUsage | None:
     """sidechain jsonl 한 라인에서 SubagentUsage 추출.
@@ -225,13 +217,10 @@ def parse_sidechain_assistant(
 
     return SubagentUsage(
         agent_type=agent_type,
-        agent_id=agent_id,
         tool_use_id=tool_use_id,
         input_tokens=int(usage.get("input_tokens", 0)),
         output_tokens=int(usage.get("output_tokens", 0)),
         cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
-        model=str(msg.get("model", "")),
         total_duration_ms=0,
-        started_at=_iso_to_epoch(entry.get("timestamp", "")),
     )

@@ -176,7 +176,6 @@ def test_collect_sidechain_subagents_parses_existing_file(tmp_path):
     assert len(subs) == 2
     assert all(isinstance(s, SubagentUsage) for s in subs)
     assert subs[0].agent_type == "claude-code-guide"
-    assert subs[0].agent_id == "agent-1"
     assert subs[0].tool_use_id == "toolu_async_1"
     assert subs[0].input_tokens == 5
     assert subs[0].output_tokens == 7
@@ -212,7 +211,8 @@ def test_collect_sidechain_subagents_skips_missing_file(tmp_path):
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     # only present has a file → 1 SubagentUsage
     assert len(subs) == 1
-    assert subs[0].agent_id == "present"
+    assert subs[0].tool_use_id == "toolu_p"
+    assert subs[0].agent_type == "type-A"
 
 
 def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):

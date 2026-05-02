@@ -184,17 +184,12 @@ def test_parse_tool_result_extracts_completed_agent_usage():
     sub = parser.parse_tool_result_for_agent(entry)
     assert sub is not None
     assert sub.agent_type == "claude-code-guide"
-    assert sub.agent_id == "agent-abc-123"
     assert sub.tool_use_id == "toolu_parent_001"
     assert sub.input_tokens == 100
     assert sub.output_tokens == 200
     assert sub.cache_creation_tokens == 50
     assert sub.cache_read_tokens == 1000
     assert sub.total_duration_ms == 12345
-    assert sub.model == ""
-    from datetime import datetime, timezone
-    expected = datetime(2026, 4, 23, 11, 0, 0, tzinfo=timezone.utc).timestamp()
-    assert sub.started_at == expected
 
 
 def test_parse_tool_result_returns_none_for_async_launched():
@@ -239,7 +234,7 @@ def test_parse_async_launch_returns_none_for_completed():
     assert parser.parse_async_launch(entry) is None
 
 
-def test_parse_sidechain_assistant_extracts_usage_with_model():
+def test_parse_sidechain_assistant_extracts_usage():
     entry = {
         "type": "assistant",
         "timestamp": "2026-04-23T12:34:56Z",
@@ -258,22 +253,16 @@ def test_parse_sidechain_assistant_extracts_usage_with_model():
     sub = parser.parse_sidechain_assistant(
         entry,
         agent_type="claude-code-guide",
-        agent_id="agent-async-1",
         tool_use_id="toolu_async_1",
     )
     assert sub is not None
     assert sub.agent_type == "claude-code-guide"
-    assert sub.agent_id == "agent-async-1"
     assert sub.tool_use_id == "toolu_async_1"
-    assert sub.model == "claude-haiku-4-5"
     assert sub.input_tokens == 7
     assert sub.output_tokens == 9
     assert sub.cache_creation_tokens == 11
     assert sub.cache_read_tokens == 13
     assert sub.total_duration_ms == 0
-    from datetime import datetime, timezone
-    expected = datetime(2026, 4, 23, 12, 34, 56, tzinfo=timezone.utc).timestamp()
-    assert sub.started_at == expected
 
 
 def test_parse_sidechain_assistant_returns_none_for_user_lines():
@@ -286,7 +275,6 @@ def test_parse_sidechain_assistant_returns_none_for_user_lines():
         parser.parse_sidechain_assistant(
             entry,
             agent_type="claude-code-guide",
-            agent_id="agent-async-1",
             tool_use_id="toolu_async_1",
         )
         is None

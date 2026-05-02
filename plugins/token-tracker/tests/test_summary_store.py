@@ -130,15 +130,12 @@ def test_load_v1_normalizes_subagents_to_empty_list(monkeypatch, tmp_path):
 def _sub(tool_use_id: str = "toolu_a", **overrides) -> SubagentUsage:
     base = dict(
         agent_type="general-purpose",
-        agent_id="agent-1",
         tool_use_id=tool_use_id,
         input_tokens=100,
         output_tokens=50,
         cache_creation_tokens=10,
         cache_read_tokens=20,
-        model="claude-sonnet-4-5",
         total_duration_ms=1234,
-        started_at=1745301234.5,
     )
     base.update(overrides)
     return SubagentUsage(**base)
@@ -172,21 +169,18 @@ def test_load_v2_round_trips_subagents(monkeypatch, tmp_path):
     assert len(subs) == 1
     assert isinstance(subs[0], SubagentUsage)
     assert subs[0].agent_type == "general-purpose"
-    assert subs[0].agent_id == "agent-1"
     assert subs[0].tool_use_id == "toolu_a"
     assert subs[0].input_tokens == 100
     assert subs[0].output_tokens == 50
     assert subs[0].cache_creation_tokens == 10
     assert subs[0].cache_read_tokens == 20
-    assert subs[0].model == "claude-sonnet-4-5"
     assert subs[0].total_duration_ms == 1234
-    assert subs[0].started_at == 1745301234.5
 
 
 def test_load_v2_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    sub_a = _sub(tool_use_id="toolu_a", agent_id="agent-a", input_tokens=1)
-    sub_b = _sub(tool_use_id="toolu_b", agent_id="agent-b", input_tokens=2)
+    sub_a = _sub(tool_use_id="toolu_a", agent_type="agent-a", input_tokens=1)
+    sub_b = _sub(tool_use_id="toolu_b", agent_type="agent-b", input_tokens=2)
     turns = [
         TurnUsage(
             model="claude-opus-4-7",
@@ -209,7 +203,7 @@ def test_load_v2_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
     assert loaded is not None
     subs = loaded.turns[0].subagents
     assert len(subs) == 2
-    assert {s.agent_id for s in subs} == {"agent-a", "agent-b"}
+    assert {s.agent_type for s in subs} == {"agent-a", "agent-b"}
     assert {s.input_tokens for s in subs} == {1, 2}
     for s in subs:
         assert isinstance(s, SubagentUsage)

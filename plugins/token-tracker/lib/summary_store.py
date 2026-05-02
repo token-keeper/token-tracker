@@ -45,20 +45,46 @@ def save_last_summary(session_id: str, summary: Summary) -> None:
         raise
 
 
+_TURN_KEYS = (
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "tools_used",
+    "timestamp_iso",
+    "message_id",
+    "index",
+    "started_at",
+    "ended_at",
+    "agent_tool_use_ids",
+)
+_SUB_KEYS = (
+    "agent_type",
+    "tool_use_id",
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "total_duration_ms",
+)
+
+
 def _turn_from_dict(raw: dict) -> TurnUsage:
     """Reconstruct a TurnUsage from a dict, normalizing across schema versions.
 
     v1 turns may be missing `subagents` and `agent_tool_use_ids`. v2 turns
     include both, with `subagents` as a list of dicts that we lift back into
-    SubagentUsage instances.
+    SubagentUsage instances. Older v2 files may contain removed-since fields
+    (`agent_id`, `started_at`, `model` on subagents) — we filter via explicit
+    key-pickup rather than `**data`, so the unknown keys are silently dropped.
     """
-    data = dict(raw)
-    raw_subs = data.pop("subagents", None) or []
+    raw_subs = raw.get("subagents") or []
     subs: list[SubagentUsage] = []
     for s in raw_subs:
         if isinstance(s, dict):
-            subs.append(SubagentUsage(**s))
-    turn = TurnUsage(**data)
+            subs.append(SubagentUsage(**{k: s[k] for k in _SUB_KEYS if k in s}))
+    turn = TurnUsage(**{k: raw[k] for k in _TURN_KEYS if k in raw})
     turn.subagents = subs
     return turn
 

@@ -89,7 +89,6 @@ def collect_sidechain_subagents(
                     sub = parse_sidechain_assistant(
                         entry,
                         agent_type=agent_type,
-                        agent_id=agent_id,
                         tool_use_id=tool_use_id,
                     )
                     if sub is not None:

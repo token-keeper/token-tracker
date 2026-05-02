@@ -113,15 +113,12 @@ def test_legend_included():
 def _sub(**overrides):
     base = dict(
         agent_type="claude-code-guide",
-        agent_id="ag-1",
         tool_use_id="tu-1",
         input_tokens=4,
         output_tokens=368,
         cache_creation_tokens=10506,
         cache_read_tokens=23497,
-        model="",
         total_duration_ms=19500,
-        started_at=None,
     )
     base.update(overrides)
     return SubagentUsage(**base)
@@ -186,7 +183,6 @@ def test_detail_subagent_cost_uses_parent_model_rate():
         output_tokens=368,
         cache_creation_tokens=10506,
         cache_read_tokens=23497,
-        model="",  # empty -> must use parent's model
     )
     turn.subagents = [sub]
     expected_cost = compute_cost("claude-opus-4-7", sub)

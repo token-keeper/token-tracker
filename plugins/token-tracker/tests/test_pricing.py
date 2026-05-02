@@ -130,7 +130,6 @@ def test_compute_cost_accepts_subagent_usage():
     """
     sub = SubagentUsage(
         agent_type="general-purpose",
-        agent_id="abc-123",
         tool_use_id="toolu_xyz",
         input_tokens=1_000_000,
         output_tokens=500_000,

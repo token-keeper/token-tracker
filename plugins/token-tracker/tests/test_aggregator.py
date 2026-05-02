@@ -127,19 +127,15 @@ def _mk_sub(
     output_tokens: int = 0,
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
-    model: str = "",
     agent_type: str = "claude-code-guide",
-    agent_id: str = "agent-1",
 ) -> SubagentUsage:
     return SubagentUsage(
         agent_type=agent_type,
-        agent_id=agent_id,
         tool_use_id=tool_use_id,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_creation_tokens=cache_creation_tokens,
         cache_read_tokens=cache_read_tokens,
-        model=model,
     )
 
 
@@ -224,8 +220,8 @@ def test_aggregate_total_cost_uses_parent_model_rate_for_subagent():
         input_tokens=0, output_tokens=0, message_id="p1",
     )
     parent.agent_tool_use_ids = ["toolu_a"]
-    # sub: 1M input tokens, model 비어있음 → 부모(opus) 단가 = $15
-    sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000, model="")
+    # sub: 1M input tokens → 부모(opus) 단가 = $15 (sub 자체에는 model 필드 없음)
+    sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000)
     s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
     # parent cost = 0, sub cost = 1M * 15 / 1M = 15.0 (opus input rate)
     assert math.isclose(s.total_cost, 15.0, rel_tol=1e-6)
