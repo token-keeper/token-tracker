@@ -96,8 +96,48 @@ def test_extract_async_launches_pairs_id_and_type():
 
     result = sidechain.extract_async_launches(entries)
     assert result == {
-        "agent-aaa-1": ("toolu_async_1", "claude-code-guide"),
-        "agent-bbb-2": ("toolu_async_2", "general-purpose"),
+        "agent-aaa-1": ("toolu_async_1", "claude-code-guide", ""),
+        "agent-bbb-2": ("toolu_async_2", "general-purpose", ""),
+    }
+
+
+def test_extract_async_launches_returns_triple_with_model():
+    """input.model이 있으면 (tool_use_id, agent_type, model) 트리플로 노출."""
+    entries = [
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_a",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_async_1",
+                        "name": "Agent",
+                        "input": {
+                            "subagent_type": "general-purpose",
+                            "model": "claude-haiku-4-5",
+                        },
+                    },
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_async_1", "content": "launched"}
+                ],
+            },
+            "toolUseResult": {
+                "agentType": "general-purpose",
+                "agentId": "agent-aaa-1",
+                "status": "async_launched",
+            },
+        },
+    ]
+    result = sidechain.extract_async_launches(entries)
+    assert result == {
+        "agent-aaa-1": ("toolu_async_1", "general-purpose", "claude-haiku-4-5"),
     }
 
 
@@ -171,7 +211,7 @@ def test_collect_sidechain_subagents_parses_existing_file(tmp_path):
         },
     ])
 
-    launches = {"agent-1": ("toolu_async_1", "claude-code-guide")}
+    launches = {"agent-1": ("toolu_async_1", "claude-code-guide", "")}
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     assert len(subs) == 2
     assert all(isinstance(s, SubagentUsage) for s in subs)
@@ -205,8 +245,8 @@ def test_collect_sidechain_subagents_skips_missing_file(tmp_path):
     ])
 
     launches = {
-        "present": ("toolu_p", "type-A"),
-        "missing": ("toolu_m", "type-B"),
+        "present": ("toolu_p", "type-A", ""),
+        "missing": ("toolu_m", "type-B", ""),
     }
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     # only present has a file → 1 SubagentUsage
@@ -238,9 +278,9 @@ def test_collect_skips_path_traversal_agent_id(tmp_path):
     )
 
     launches = {
-        "../evil": ("toolu_x", "type-X"),
-        "..": ("toolu_y", "type-Y"),
-        "/abs/path": ("toolu_z", "type-Z"),
+        "../evil": ("toolu_x", "type-X", ""),
+        "..": ("toolu_y", "type-Y", ""),
+        "/abs/path": ("toolu_z", "type-Z", ""),
     }
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     assert subs == []
@@ -276,7 +316,7 @@ def test_collect_skips_symlink_targets(tmp_path):
         import pytest
         pytest.skip("symlink not supported on this platform")
 
-    launches = {"evil": ("toolu_x", "type-X")}
+    launches = {"evil": ("toolu_x", "type-X", "")}
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     assert subs == []
 
@@ -287,8 +327,8 @@ def test_collect_handles_empty_sidechain_dir(tmp_path):
     sub_dir.mkdir(parents=True)
 
     launches = {
-        "alpha": ("toolu_a", "type-A"),
-        "beta": ("toolu_b", "type-B"),
+        "alpha": ("toolu_a", "type-A", ""),
+        "beta": ("toolu_b", "type-B", ""),
     }
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     assert subs == []
@@ -317,13 +357,62 @@ def test_collect_handles_empty_jsonl_file(tmp_path):
     ])
 
     launches = {
-        "empty": ("toolu_e", "type-E"),
-        "good": ("toolu_g", "type-G"),
+        "empty": ("toolu_e", "type-E", ""),
+        "good": ("toolu_g", "type-G", ""),
     }
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     # Only the populated file contributes.
     assert len(subs) == 1
     assert subs[0].tool_use_id == "toolu_g"
+
+
+def test_collect_sidechain_uses_assistant_model_first(tmp_path):
+    """sidechain assistant 라인의 message.model이 우선이고, launches의 fallback
+    model은 sidechain model이 빈 값일 때만 사용된다."""
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+
+    _write_sidechain_file(sub_dir, "agent-with-model", [
+        {
+            "type": "assistant",
+            "timestamp": "2026-04-23T12:00:00Z",
+            "message": {
+                "id": "msg_a",
+                "model": "claude-haiku-4-5",  # sidechain own model — should win
+                "usage": {
+                    "input_tokens": 1, "output_tokens": 2,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+                "content": [],
+            },
+        },
+    ])
+    _write_sidechain_file(sub_dir, "agent-no-model", [
+        {
+            "type": "assistant",
+            "timestamp": "2026-04-23T12:00:00Z",
+            "message": {
+                "id": "msg_b",
+                # message.model omitted — caller-side launch model is fallback
+                "usage": {
+                    "input_tokens": 3, "output_tokens": 4,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+                "content": [],
+            },
+        },
+    ])
+
+    launches = {
+        # caller dispatched with model: sonnet, but sidechain says haiku → haiku wins
+        "agent-with-model": ("toolu_w", "general-purpose", "claude-sonnet-4-6"),
+        # caller dispatched with sonnet, sidechain has no model → fall back to sonnet
+        "agent-no-model": ("toolu_n", "general-purpose", "claude-sonnet-4-6"),
+    }
+    subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
+    by_tu = {s.tool_use_id: s for s in subs}
+    assert by_tu["toolu_w"].model == "claude-haiku-4-5"
+    assert by_tu["toolu_n"].model == "claude-sonnet-4-6"
 
 
 def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):
@@ -349,7 +438,7 @@ def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):
         f.write('\n')  # blank line
         f.write('{"also":"broken"\n')  # another corrupt
 
-    launches = {"corrupt": ("toolu_c", "type-X")}
+    launches = {"corrupt": ("toolu_c", "type-X", "")}
     subs = sidechain.collect_sidechain_subagents(sub_dir, launches)
     assert len(subs) == 1
     assert subs[0].input_tokens == 9
