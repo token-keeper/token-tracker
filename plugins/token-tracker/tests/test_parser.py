@@ -291,3 +291,53 @@ def test_parse_sidechain_assistant_returns_none_for_user_lines():
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# TurnUsage.agent_tool_use_ids — parse_line collects Agent tool_use ids
+# ---------------------------------------------------------------------------
+
+
+def test_parse_line_collects_agent_tool_use_ids():
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-04-23T10:00:00Z",
+        "message": {
+            "id": "msg_1",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 10, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "content": [
+                {"type": "text", "text": "ok"},
+                {"type": "tool_use", "name": "Agent", "id": "toolu_agent_1"},
+                {"type": "tool_use", "name": "Agent", "id": "toolu_agent_2"},
+            ],
+        },
+    }
+    t = parser.parse_line(entry)
+    assert t is not None
+    assert t.agent_tool_use_ids == ["toolu_agent_1", "toolu_agent_2"]
+
+
+def test_parse_line_ignores_non_agent_tool_use():
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-04-23T10:00:00Z",
+        "message": {
+            "id": "msg_1",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 10, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "content": [
+                {"type": "tool_use", "name": "Read", "id": "toolu_read_1"},
+                {"type": "tool_use", "name": "Bash", "id": "toolu_bash_1"},
+            ],
+        },
+    }
+    t = parser.parse_line(entry)
+    assert t is not None
+    assert t.agent_tool_use_ids == []

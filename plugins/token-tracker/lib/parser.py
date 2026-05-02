@@ -18,6 +18,11 @@ class TurnUsage:
     index: int = 0  # set by aggregator
     started_at: float | None = None  # derived from timestamp_iso (epoch seconds)
     ended_at: float | None = None  # reserved; currently always None from JSONL
+    # Agent tool_use ids issued by this turn — used by aggregator to match
+    # SubagentUsage records back to their parent turn.
+    agent_tool_use_ids: list[str] = field(default_factory=list)
+    # Filled by aggregator: subagent runs whose tool_use_id matched this turn.
+    subagents: list["SubagentUsage"] = field(default_factory=list)
 
 
 @dataclass
@@ -66,6 +71,14 @@ def parse_line(entry: dict) -> TurnUsage | None:
         {"name": name, "count": count}
         for name, count in counter.items()
     ]
+    agent_tool_use_ids = [
+        str(blk.get("id", ""))
+        for blk in content
+        if isinstance(blk, dict)
+        and blk.get("type") == "tool_use"
+        and blk.get("name") == "Agent"
+        and blk.get("id")
+    ]
 
     timestamp_iso = entry.get("timestamp", "")
 
@@ -79,6 +92,7 @@ def parse_line(entry: dict) -> TurnUsage | None:
         timestamp_iso=timestamp_iso,
         message_id=str(msg.get("id", "")),
         started_at=_iso_to_epoch(timestamp_iso),
+        agent_tool_use_ids=agent_tool_use_ids,
     )
 
 
