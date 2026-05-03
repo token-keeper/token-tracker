@@ -185,12 +185,20 @@ def parse_tool_result_for_agent(entry: dict) -> SubagentUsage | None:
     tool_use_id = _extract_tool_use_id(entry)
     usage = tur.get("usage") if isinstance(tur.get("usage"), dict) else {}
 
+    cc = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+    cache_5m = int(cc.get("ephemeral_5m_input_tokens", 0))
+    cache_1h = int(cc.get("ephemeral_1h_input_tokens", 0))
+    if not cc:
+        cache_5m = int(usage.get("cache_creation_input_tokens", 0))
+        cache_1h = 0
+
     return SubagentUsage(
         agent_type=str(agent_type),
         tool_use_id=tool_use_id,
         input_tokens=int(usage.get("input_tokens", 0)),
         output_tokens=int(usage.get("output_tokens", 0)),
-        cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
+        cache_creation_5m_tokens=cache_5m,
+        cache_creation_1h_tokens=cache_1h,
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         total_duration_ms=int(tur.get("totalDurationMs", 0) or 0),
     )

@@ -578,6 +578,34 @@ def test_parse_line_falls_back_to_legacy_when_no_cache_creation_obj():
     assert t.cache_creation_1h_tokens == 0
 
 
+def test_parse_tool_result_for_agent_extracts_5m_1h():
+    from lib.parser import parse_tool_result_for_agent
+    entry = {
+        "type": "user",
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "totalDurationMs": 1234,
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 20,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 100,
+                    "ephemeral_1h_input_tokens": 200,
+                },
+            },
+        },
+        "message": {
+            "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}],
+        },
+    }
+    s = parse_tool_result_for_agent(entry)
+    assert s is not None
+    assert s.cache_creation_5m_tokens == 100
+    assert s.cache_creation_1h_tokens == 200
+
+
 def test_parse_line_prefers_nested_cc_when_both_present():
     """이중 카운팅 회귀 가드: 중첩 객체와 legacy가 동시에 박혀도 중첩만 사용."""
     from lib.parser import parse_line
