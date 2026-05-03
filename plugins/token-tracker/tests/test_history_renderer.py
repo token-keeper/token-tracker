@@ -46,3 +46,20 @@ def test_render_uses_lang_attr():
     assert 'lang="en"' in html
     html_ko = render_history_html(current=[], all_sessions=[], lang="ko")
     assert 'lang="ko"' in html_ko
+
+
+def test_render_escapes_script_data_double_escaped_breakout():
+    """`<!--<script>...</script><script>` triggers HTML5 script-data-double-escaped
+    state where normal `</` escape is neutralized. Verify `<!--` is also escaped."""
+    from lib.history_renderer import render_history_html
+    payload = [{"prompt_id": "p", "session_id": "s",
+                "user_prompt": {"text": "<!--<script>alert(1)</script><script>", "ts": 1.0},
+                "started_at": 1.0, "ended_at": 2.0,
+                "summary": {"total_cost": 0, "total_input_tokens": 0,
+                            "total_output_tokens": 0, "cache_hit_rate": 0,
+                            "total_elapsed": 0, "turns": []},
+                "models_used": [], "has_subagent_other_model": False,
+                "transcript_entries": []}]
+    html = render_history_html(current=payload, all_sessions=[], lang="ko")
+    # Raw `<!--<script>` must be escaped
+    assert "<!--<script>" not in html

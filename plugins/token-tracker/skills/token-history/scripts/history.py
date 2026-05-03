@@ -60,6 +60,16 @@ def main(argv: list[str]) -> int:
         out_path = out_dir / f"history-{ts}.html"
         out_path.write_text(html, encoding="utf-8")
 
+        # Keep only the 2 most recent snapshots per session to bound disk usage.
+        # Timestamp suffix is for browser cache-bust (spec §2); accumulating
+        # every snapshot would silently grow disk over time.
+        existing = sorted(out_dir.glob("history-*.html"))
+        for old in existing[:-2]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
         url = f"file://{out_path}"
         try:
             subprocess.run(["open", url], check=False)

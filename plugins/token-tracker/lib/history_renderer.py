@@ -26,9 +26,23 @@ def _read(path: Path) -> str:
 
 
 def _safe_json_for_script(obj) -> str:
-    """JSON-encode for inline <script> block — escape `</` to neutralize
-    `</script>` injection in any string field."""
-    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+    """JSON-encode for inline <script> block.
+
+    Two HTML5 script-data parser transitions can break out of the inline
+    block with attacker-controlled string content:
+      1. `</` → `</script>` close
+      2. `<!--` → "script data escaped" state, then `<script>` flips to
+         "script data double escaped" where the normal `</` escape is
+         neutralized until a matching `</script>` (escaped) appears
+    Both vectors are blocked here. Trust boundary is the local user, but
+    spec §1.4 acknowledges tool_result content can include adversarial
+    file content, so we harden by default.
+    """
+    return (
+        json.dumps(obj, ensure_ascii=False)
+        .replace("</", "<\\/")
+        .replace("<!--", "<\\!--")
+    )
 
 
 def _read_plugin_version() -> str:

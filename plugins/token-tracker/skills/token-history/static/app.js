@@ -19,7 +19,7 @@
   const state = {
     tab: 'current',
     sortKey: 'time',
-    sortDir: 1,
+    sortDir: -1,  // most recent first
     search: '',
     model: '',
     session: '',
@@ -238,12 +238,13 @@
       const h = document.createElement('h4');
       h.textContent = i18n.expand_tool_calls.replace('{n}', tools.length);
       sec.appendChild(h);
+      const truncate = (s, n) => s.length > n ? s.slice(0, n) + ' …' : s;
       tools.forEach(t => {
         const li = document.createElement('div');
         if (t.type === 'tool_call') {
-          li.textContent = `▸ ${t.name}: ${JSON.stringify(t.input).slice(0, 200)}`;
+          li.textContent = `▸ ${t.name}: ${truncate(JSON.stringify(t.input), 200)}`;
         } else {
-          li.textContent = `  ↳ result${t.is_error ? ' (error)' : ''}: ${(t.content || '').slice(0, 200)}`;
+          li.textContent = `  ↳ result${t.is_error ? ' (error)' : ''}: ${truncate(t.content || '', 200)}`;
         }
         sec.appendChild(li);
       });
@@ -320,7 +321,5 @@
     render();
   });
 
-  // Initial sort: most recent first
-  state.sortDir = -1;
   render();
 })();
