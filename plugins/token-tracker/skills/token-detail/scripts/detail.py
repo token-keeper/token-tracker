@@ -33,7 +33,7 @@ def main(argv: list[str]) -> int:
 
     try:
         from lib.i18n_loader import load_strings
-        from lib.summary_store import load_last_summary
+        from lib.summary_store import SUPPORTED_SCHEMA_VERSIONS, load_last_summary
         from lib.detail_formatter import format_detail
 
         from lib.config import load_config, get_language
@@ -55,7 +55,7 @@ def main(argv: list[str]) -> int:
                 return 0
             try:
                 data = json.loads(candidate.read_text(encoding="utf-8"))
-                if data.get("schema_version") not in (3,):
+                if data.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
                     print(strings["err_unsupported_schema"])
                     return 0
             except Exception:

@@ -85,12 +85,14 @@ def test_script_outputs_err_unsupported_schema(tmp_path):
     assert ("호환되지 않습니다" in result.stdout) or ("not compatible" in result.stdout)
 
 
-def test_detail_script_v3_in_supported_versions():
-    """detail.py 안의 schema_version 화이트리스트에 3이 포함됨.
-    summary_store SCHEMA_VERSION v3 bump와 동기화 보장 (CRITICAL #2)."""
+def test_detail_script_imports_supported_schema_versions_from_summary_store():
+    """detail.py가 summary_store.SUPPORTED_SCHEMA_VERSIONS를 import해서 사용 (DRY).
+    하드코딩 (3,) 대신 단일 진실원에 의존 → v4 bump 시 silent skew 회귀 방지 (CRITICAL #2)."""
     src = SCRIPT.read_text(encoding="utf-8")
-    # `not in (3,)` 또는 3이 포함된 화이트리스트 패턴
-    assert "(3,)" in src or "3 in" in src or ", 3)" in src or ", 3," in src
+    assert "from lib.summary_store import" in src and "SUPPORTED_SCHEMA_VERSIONS" in src
+    # 하드코딩 (3,) / (1, 2) 같은 inline tuple 잔존 금지
+    assert "not in (3,)" not in src
+    assert "not in (1, 2)" not in src
 
 
 def test_script_accepts_v3_schema(tmp_path):

@@ -6,4 +6,4 @@ venv/
 .DS_Store
 .claude/settings.local.json
 .obsidian/
-scripts/
+/scripts/
