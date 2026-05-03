@@ -171,3 +171,53 @@ def test_compute_cost_accepts_subagent_usage():
     assert math.isclose(sub_cost, turn_cost, rel_tol=1e-9)
     # Sanity: 1M input * $15 + 0.5M output * $75 + 2M cache_read * $1.5 = 15 + 37.5 + 3 = 55.5
     assert math.isclose(sub_cost, 55.5, rel_tol=1e-9)
+
+
+def test_pricing_opus_4_7_all_rates_absolute():
+    """Opus 4.7 단가 5개 절대값 가드 — 옛 단가($15/$75/$18.75/$1.5) 회귀 방지.
+    단가 변경 시 같이 갱신 필요."""
+    from lib.pricing import PRICING
+    p = PRICING["claude-opus-4-7"]
+    assert p["input"] == 5.0
+    assert p["output"] == 25.0
+    assert p["cache_creation_5m"] == 6.25
+    assert p["cache_creation_1h"] == 10.0
+    assert p["cache_read"] == 0.50
+
+
+def test_pricing_sonnet_4_6_1h_is_6_dollars_per_mtok():
+    from lib.pricing import PRICING
+    assert PRICING["claude-sonnet-4-6"]["cache_creation_1h"] == 6.0
+    assert PRICING["claude-sonnet-4-6"]["cache_creation_5m"] == 3.75
+
+
+def test_pricing_haiku_4_5_1h_is_2_dollars_per_mtok():
+    from lib.pricing import PRICING
+    assert PRICING["claude-haiku-4-5"]["cache_creation_1h"] == 2.0
+    assert PRICING["claude-haiku-4-5"]["cache_creation_5m"] == 1.25
+
+
+def test_pricing_1h_more_expensive_than_5m_for_all_models():
+    """tier 분리 누락 회귀 가드 — 1h가 5m보다 비싸야 정상."""
+    from lib.pricing import PRICING
+    for model, rates in PRICING.items():
+        assert rates["cache_creation_1h"] > rates["cache_creation_5m"], (
+            f"{model}: 1h {rates['cache_creation_1h']} <= 5m {rates['cache_creation_5m']}"
+        )
+
+
+def test_compute_cost_combines_5m_and_1h_correctly():
+    """5m + 1h 두 단가 정확 합산."""
+    from lib.parser import TurnUsage
+    from lib.pricing import compute_cost
+    usage = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=1_000_000,    # = $5
+        output_tokens=1_000_000,   # = $25
+        cache_creation_5m_tokens=1_000_000,  # = $6.25
+        cache_creation_1h_tokens=1_000_000,  # = $10
+        cache_read_tokens=1_000_000,         # = $0.50
+    )
+    cost = compute_cost("claude-opus-4-7", usage)
+    expected = 5.0 + 25.0 + 6.25 + 10.0 + 0.50
+    assert abs(cost - expected) < 1e-6
