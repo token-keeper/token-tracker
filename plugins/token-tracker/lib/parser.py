@@ -107,6 +107,16 @@ def parse_line(entry: dict) -> TurnUsage | None:
     if not isinstance(usage, dict):
         return None
 
+    # cache_creation tier 분리 추출 (spec §4)
+    cc = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+    cache_5m = int(cc.get("ephemeral_5m_input_tokens", 0))
+    cache_1h = int(cc.get("ephemeral_1h_input_tokens", 0))
+    if not cc:
+        # fallback: 옛 entry는 합산값을 5m로 간주 (방향: underbill).
+        # 진단 결과 이 path는 실전 dead code이지만 옛 fixture 호환 위해 유지.
+        cache_5m = int(usage.get("cache_creation_input_tokens", 0))
+        cache_1h = 0
+
     content = msg.get("content") or []
     raw_names = [
         blk.get("name", "")
@@ -126,7 +136,8 @@ def parse_line(entry: dict) -> TurnUsage | None:
         model=msg.get("model", ""),
         input_tokens=int(usage.get("input_tokens", 0)),
         output_tokens=int(usage.get("output_tokens", 0)),
-        cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
+        cache_creation_5m_tokens=cache_5m,
+        cache_creation_1h_tokens=cache_1h,
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         tools_used=tools_used,
         timestamp_iso=timestamp_iso,

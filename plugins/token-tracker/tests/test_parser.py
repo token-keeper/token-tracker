@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from lib import parser
 
 
@@ -523,3 +525,83 @@ def test_subagent_usage_has_separate_5m_and_1h_fields():
     assert s.cache_creation_5m_tokens == 300
     assert s.cache_creation_1h_tokens == 400
     assert not hasattr(s, "cache_creation_tokens")
+
+
+@pytest.mark.parametrize("c5m,c1h", [(0, 0), (100, 0), (0, 200), (100, 200)])
+def test_parse_line_extracts_5m_and_1h_matrix(c5m, c1h):
+    from lib.parser import parse_line
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_1",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 20,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": c5m,
+                    "ephemeral_1h_input_tokens": c1h,
+                },
+            },
+            "content": [],
+        },
+        "timestamp": "2026-05-03T10:00:00Z",
+    }
+    t = parse_line(entry)
+    assert t is not None
+    assert t.cache_creation_5m_tokens == c5m
+    assert t.cache_creation_1h_tokens == c1h
+
+
+def test_parse_line_falls_back_to_legacy_when_no_cache_creation_obj():
+    """구버전 entry: cache_creation 중첩 객체 없으면 합산값을 5m로 간주."""
+    from lib.parser import parse_line
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_2",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 999,
+            },
+            "content": [],
+        },
+        "timestamp": "2026-05-03T10:00:00Z",
+    }
+    t = parse_line(entry)
+    assert t is not None
+    assert t.cache_creation_5m_tokens == 999
+    assert t.cache_creation_1h_tokens == 0
+
+
+def test_parse_line_prefers_nested_cc_when_both_present():
+    """이중 카운팅 회귀 가드: 중첩 객체와 legacy가 동시에 박혀도 중첩만 사용."""
+    from lib.parser import parse_line
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_3",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 3000,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 1000,
+                    "ephemeral_1h_input_tokens": 2000,
+                },
+            },
+            "content": [],
+        },
+        "timestamp": "2026-05-03T10:00:00Z",
+    }
+    t = parse_line(entry)
+    assert t is not None
+    assert t.cache_creation_5m_tokens == 1000
+    assert t.cache_creation_1h_tokens == 2000
+    assert (t.cache_creation_5m_tokens + t.cache_creation_1h_tokens) == 3000
