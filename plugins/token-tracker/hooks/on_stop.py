@@ -169,10 +169,11 @@ def main() -> int:
             msg = msg + "\n" + format_detail(summary, lang)
 
         # Async background dispatch UX (옵션 D): 활성 background agent가 1개라도
-        # 있으면 매 Stop마다 끼어드는 한 줄 요약을 silent 처리. last_summary는
-        # 이미 위에서 저장됐으므로 사용자가 /token-detail로 누적치 확인 가능.
-        # 모두 끝난 시점의 Stop에서 1번만 emit. verbose는 debug 용도라 그대로 emit.
-        if not verbose and count_active_async_agents(entries) > 0:
+        # 있으면 매 Stop마다 끼어드는 출력을 silent 처리. last_summary는 이미
+        # 위에서 저장됐으므로 사용자가 /token-detail로 누적치 확인 가능. 모두
+        # 끝난 시점의 Stop에서 1번만 emit. verbose는 "한 줄 요약 vs 상세 표"의
+        # 출력 형식 차이일 뿐 "언제 emit할지"에는 영향 주지 않는다.
+        if count_active_async_agents(entries) > 0:
             return 0
 
         _emit(msg)

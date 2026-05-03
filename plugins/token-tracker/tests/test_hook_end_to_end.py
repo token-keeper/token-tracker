@@ -601,6 +601,21 @@ def test_sidechain_async_subagent_tokens_included_in_summary(tmp_path):
                 "status": "async_launched",
             },
         },
+        # active=0 시점에서 emit 검증 — D 옵션 default가 silent를 유발하지 않게 completed 추가.
+        {
+            "type": "user",
+            "uuid": "u-done-1",
+            "timestamp": "2026-04-23T10:00:05.000Z",
+            "message": {
+                "role": "user",
+                "content": (
+                    "<task-notification>"
+                    "<task-id>agent-side-1</task-id>"
+                    "<status>completed</status>"
+                    "</task-notification>"
+                ),
+            },
+        },
     ]
     # Step 1: only user line is present at UserPromptSubmit time
     # so the recorded offset starts before assistant lines.
@@ -1066,8 +1081,12 @@ def test_stop_emits_normally_when_no_async_dispatch(tmp_path):
     assert "toks" in msg, f"sync-only stop should emit normally, got: {msg!r}"
 
 
-def test_stop_emits_in_verbose_even_when_async_active(tmp_path):
-    """verbose 모드는 debug용이라 active background가 있어도 silent 처리하지 않는다."""
+def test_stop_silent_when_async_active_even_with_verbose(tmp_path):
+    """verbose 모드여도 background sub agent 진행 중에는 silent (옵션 D default).
+
+    verbose는 "한 줄 요약 vs 상세 표"의 출력 형식 차이일 뿐, "언제 emit할지"는
+    active=0 시점 한 번이어야 한다. 진행 중에 매 Stop마다 끼어들면 안 됨.
+    """
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     session_path = tmp_path / "session.jsonl"
@@ -1123,10 +1142,11 @@ def test_stop_emits_in_verbose_even_when_async_active(tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(fake_home)
     env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
-    env["TOKEN_TRACKER_VERBOSE"] = "1"  # debug 용도 — silent 안 함
+    env["TOKEN_TRACKER_VERBOSE"] = "1"  # verbose여도 active>0이면 silent
 
+    session_id = "verbose-bg-active"
     payload = {
-        "session_id": "verbose-bg",
+        "session_id": session_id,
         "transcript_path": str(session_path),
         "cwd": str(tmp_path),
         "hook_event_name": "UserPromptSubmit",
@@ -1140,9 +1160,122 @@ def test_stop_emits_in_verbose_even_when_async_active(tmp_path):
     payload["hook_event_name"] = "Stop"
     r = _run("on_stop.py", payload, env)
     assert r.returncode == 0
+    # Silent: empty stdout or JSON without systemMessage
+    if r.stdout.strip():
+        out = json.loads(r.stdout)
+        assert "systemMessage" not in out or not out.get("systemMessage"), (
+            f"expected silent output even in verbose while async active, got: {r.stdout!r}"
+        )
+
+    # last_summary는 silent 케이스에서도 정상 누적 갱신돼야 한다.
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert summary_file.is_file(), (
+        "last_summary should still be persisted while async active in verbose mode"
+    )
+
+
+def test_stop_emits_with_verbose_table_when_async_done(tmp_path):
+    """verbose=true + active=0이면 한 줄 요약 + 상세 표 둘 다 포함하여 emit."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BGV",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BGV", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bgv",
+            "status": "async_launched",
+        },
+    }
+    completion_notification = {
+        "type": "user",
+        "uuid": "u-3",
+        "timestamp": "2026-04-23T10:00:10.000Z",
+        "message": {
+            "role": "user",
+            "content": (
+                "<task-notification>"
+                "<task-id>agent-bgv</task-id>"
+                "<status>completed</status>"
+                "</task-notification>"
+            ),
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"  # verbose ON
+
+    payload = {
+        "session_id": "verbose-bg-done",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+        f.write(json.dumps(completion_notification) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
     out = json.loads(r.stdout)
     msg = out.get("systemMessage", "")
-    assert "toks" in msg, f"verbose should still emit; got: {msg!r}"
+    # 한 줄 요약 표시: "toks" 포함
+    assert "toks" in msg, f"expected one-line summary, got: {msg!r}"
+    # 상세 표 표시: detail_formatter가 만드는 표 헤더에 "Turn"과 "$"가 포함됨
+    # (verbose 표는 줄바꿈 + 표 형태 → 한 줄보다 길고 줄바꿈 다수 포함)
+    assert "\n" in msg, f"expected verbose table appended, got: {msg!r}"
+    assert msg.count("\n") >= 2, (
+        f"expected verbose detail table (multi-line), got: {msg!r}"
+    )
 
 
 def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
