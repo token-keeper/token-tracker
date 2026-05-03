@@ -28,7 +28,7 @@ def _seed_last_summary(home: Path, session_id: str, payload: dict) -> None:
 
 def _valid_summary_payload(session_id: str) -> dict:
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "session_id": session_id,
         "saved_at": 1745301234.5,
         "summary": {
@@ -40,10 +40,12 @@ def _valid_summary_payload(session_id: str) -> dict:
             "turns": [{
                 "model": "claude-opus-4-7",
                 "input_tokens": 100, "output_tokens": 50,
-                "cache_creation_tokens": 0, "cache_read_tokens": 0,
+                "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                "cache_read_tokens": 0,
                 "tools_used": [{"name": "Read", "count": 1}],
                 "timestamp_iso": "2026-04-23T10:00:00Z",
                 "message_id": "m1", "index": 0,
+                "subagents": [], "agent_tool_use_ids": [],
             }],
         },
     }
@@ -91,12 +93,25 @@ def test_detail_script_v3_in_supported_versions():
     assert "(3,)" in src or "3 in" in src or ", 3)" in src or ", 3," in src
 
 
-def test_script_accepts_v2_schema(tmp_path):
-    payload = _valid_summary_payload("sess-v2")
-    payload["schema_version"] = 2
-    payload["summary"]["turns"][0]["subagents"] = []
-    payload["summary"]["turns"][0]["agent_tool_use_ids"] = []
-    _seed_last_summary(tmp_path, "sess-v2", payload)
-    result = _run_script("sess-v2", env_overrides={"HOME": str(tmp_path)})
+def test_script_accepts_v3_schema(tmp_path):
+    """v0.7.0 v3 schema 파일은 정상 렌더링되어야 한다."""
+    payload = _valid_summary_payload("sess-v3")
+    _seed_last_summary(tmp_path, "sess-v3", payload)
+    result = _run_script("sess-v3", env_overrides={"HOME": str(tmp_path)})
     assert result.returncode == 0
     assert "Read×1" in result.stdout
+
+
+def test_script_rejects_v2_schema_as_unsupported(tmp_path):
+    """v0.7.0에서 옛 v2 파일은 unsupported schema로 거부된다 (회귀 가드)."""
+    payload = _valid_summary_payload("sess-old-v2")
+    payload["schema_version"] = 2
+    # v2 형식의 cache_creation_tokens(5m/1h 미분리)으로 다운그레이드
+    t = payload["summary"]["turns"][0]
+    t.pop("cache_creation_5m_tokens", None)
+    t.pop("cache_creation_1h_tokens", None)
+    t["cache_creation_tokens"] = 0
+    _seed_last_summary(tmp_path, "sess-old-v2", payload)
+    result = _run_script("sess-old-v2", env_overrides={"HOME": str(tmp_path)})
+    assert result.returncode == 0
+    assert ("호환되지 않습니다" in result.stdout) or ("not compatible" in result.stdout)
