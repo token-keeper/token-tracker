@@ -84,11 +84,21 @@ def main() -> int:
             return 0
 
         from lib.state import save_state
+        import secrets
 
         size = os.path.getsize(transcript_path) if os.path.exists(transcript_path) else 0
+        # spec §4.4.1: real user prompt에만 prompt_id 발급. synthetic은 위에서
+        # early return되므로 여기 도달하지 않음. 결과적으로 synthetic event 후
+        # 발생하는 Stop은 직전 real prompt의 prompt_id로 누적된다 (의도된 동작).
+        prompt_text = hook_input.get("prompt") if isinstance(hook_input.get("prompt"), str) else ""
         save_state(
             session_id,
-            {"offset": size, "started_at": time.time()},
+            {
+                "offset": size,
+                "started_at": time.time(),
+                "prompt_id": f"p_{secrets.token_hex(3)}",
+                "prompt_text": prompt_text,
+            },
         )
     except Exception:
         _log_error(f"[on_user_prompt] {traceback.format_exc()}")
