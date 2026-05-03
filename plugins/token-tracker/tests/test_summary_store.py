@@ -243,6 +243,38 @@ def test_load_v2_sub_without_model_defaults_to_empty(monkeypatch, tmp_path):
     assert loaded.turns[0].subagents[0].model == ""
 
 
+def test_load_v1_returns_none(monkeypatch, tmp_path):
+    """v1 schema 파일은 v3 gate 통과 못해 load 시 None 반환."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    d = paths.state_dir() / "test_v1"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "last_summary.json").write_text(json.dumps({
+        "schema_version": 1,
+        "session_id": "test_v1",
+        "saved_at": 0,
+        "summary": {"total_cost": 0.5, "total_input_tokens": 100,
+                     "total_output_tokens": 50, "cache_hit_rate": 0.0,
+                     "total_elapsed": 1.0, "turns": []},
+    }), encoding="utf-8")
+    assert summary_store.load_last_summary("test_v1") is None
+
+
+def test_load_v2_returns_none(monkeypatch, tmp_path):
+    """v2 schema 파일은 v3 gate 통과 못해 load 시 None 반환."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    d = paths.state_dir() / "test_v2"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "last_summary.json").write_text(json.dumps({
+        "schema_version": 2,
+        "session_id": "test_v2",
+        "saved_at": 0,
+        "summary": {"total_cost": 0.5, "total_input_tokens": 100,
+                     "total_output_tokens": 50, "cache_hit_rate": 0.0,
+                     "total_elapsed": 1.0, "turns": []},
+    }), encoding="utf-8")
+    assert summary_store.load_last_summary("test_v2") is None
+
+
 def test_save_writes_v3(monkeypatch, tmp_path):
     """v3 schema_version으로 저장되고 turns의 cache_creation_5m/1h 키가 분리되어 직렬화된다."""
     monkeypatch.setenv("HOME", str(tmp_path))
