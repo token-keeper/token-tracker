@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="__LANG__">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="cache-control" content="no-store">
+  <title>__HTML_TITLE__</title>
+  <style>__CSS__</style>
+</head>
+<body>
+  <header>
+    <h1>__HTML_TITLE__</h1>
+    <div class="meta">__GENERATED_AT__ · __VERSION_LABEL__</div>
+  </header>
+  <nav class="tabs">
+    <button data-tab="current" class="active">__TAB_CURRENT__</button>
+    <button data-tab="all">__TAB_ALL__</button>
+  </nav>
+  <section class="filters">
+    <input type="search" id="search" placeholder="__SEARCH_PLACEHOLDER__">
+    <select id="filter-model"><option value="">__FILTER_MODEL_ALL__</option></select>
+    <select id="filter-session"><option value="">__FILTER_SESSION_ALL__</option></select>
+  </section>
+  <section id="totals" class="totals"></section>
+  <main id="table-host"></main>
+  <section id="empty" class="empty" hidden>__NO_DATA_MESSAGE__</section>
+  <script id="data-current" type="application/json">__DATA_CURRENT__</script>
+  <script id="data-all" type="application/json">__DATA_ALL__</script>
+  <script id="i18n" type="application/json">__I18N_JSON__</script>
+  <script>__JS__</script>
+</body>
+</html>

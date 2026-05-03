@@ -1,0 +1,20 @@
+:root { color-scheme: light dark; }
+body { font: 14px/1.5 system-ui, -apple-system, sans-serif; margin: 0; padding: 1rem; }
+header h1 { margin: 0 0 0.25rem; font-size: 1.2rem; }
+header .meta { color: #888; font-size: 0.85rem; }
+nav.tabs { margin: 1rem 0 0.5rem; display: flex; gap: 0.5rem; }
+nav.tabs button { padding: 0.4rem 0.8rem; border: 1px solid #ccc; background: transparent; cursor: pointer; }
+nav.tabs button.active { background: #eef; border-color: #88f; }
+.filters { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.filters input, .filters select { padding: 0.3rem; }
+.totals { margin: 0.5rem 0; padding: 0.4rem; background: #f4f4f4; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 0.3rem 0.5rem; border-bottom: 1px solid #eee; text-align: left; }
+th { cursor: pointer; user-select: none; }
+.row-expand { background: #fafafa; padding: 0.5rem; }
+.row-expand section { margin: 0.5rem 0; }
+.row-expand h4 { margin: 0 0 0.25rem; font-size: 0.9rem; }
+pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.collapsed pre.long { max-height: 4lh; overflow: hidden; }
+.collapsed pre.long::after { content: ' …'; }
+.empty { padding: 2rem; text-align: center; color: #888; }
