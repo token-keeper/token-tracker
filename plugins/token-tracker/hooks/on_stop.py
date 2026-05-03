@@ -77,8 +77,8 @@ def main() -> int:
         from lib.formatter import format_summary
         from lib.sidechain import (
             collect_sidechain_subagents,
-            count_active_async_agents,
-            extract_async_launches,
+            count_active_async_agents_from_file,
+            extract_async_launches_from_file,
             find_sidechain_dir,
         )
 
@@ -126,10 +126,13 @@ def main() -> int:
             return 0
 
         # Async subagents: extracted from sidechain jsonl files when available.
+        # `extract_async_launches_from_file` reads the full main jsonl (offset
+        # ignored) so dispatches recorded in an earlier turn are still seen
+        # when the current Stop fires from a later turn's `_read_tail`.
         async_subs = []
         sidechain_dir = find_sidechain_dir(transcript_path)
         if sidechain_dir is not None:
-            launches = extract_async_launches(entries)
+            launches = extract_async_launches_from_file(transcript_path)
             if launches:
                 async_subs = collect_sidechain_subagents(sidechain_dir, launches)
 
@@ -173,7 +176,8 @@ def main() -> int:
         # 위에서 저장됐으므로 사용자가 /token-detail로 누적치 확인 가능. 모두
         # 끝난 시점의 Stop에서 1번만 emit. verbose는 "한 줄 요약 vs 상세 표"의
         # 출력 형식 차이일 뿐 "언제 emit할지"에는 영향 주지 않는다.
-        if count_active_async_agents(entries) > 0:
+        # file-based로 jsonl 전체를 읽어 이전 turn의 dispatch도 본다 (윈도우 회귀 fix).
+        if count_active_async_agents_from_file(transcript_path) > 0:
             return 0
 
         _emit(msg)

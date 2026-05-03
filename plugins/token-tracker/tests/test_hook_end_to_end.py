@@ -1378,6 +1378,133 @@ def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
     )
 
 
+def test_e2e_active_count_remains_when_dispatch_in_earlier_turn(tmp_path):
+    """v0.6.3 회귀 가드 (Bug A).
+
+    시나리오: turn 1에서 async dispatch (active>0이라 silent) → turn 2 시작
+    (UserPromptSubmit이 file 끝 offset 기록) → turn 2의 Stop hook 발화.
+
+    이 시점 `_read_tail(transcript_path, offset)`은 turn 2 라인만 보므로 기존
+    in-memory `extract_async_launches(entries)`는 launches 0개로 추출 →
+    `count_active_async_agents`도 0 → silent guard 풀려 매번 끼어드는 회귀.
+
+    Fix: file-based `count_active_async_agents_from_file`으로 jsonl 전체를 읽으면
+    이전 turn의 dispatch도 보여 active=1 → silent 유지.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    session_stem = "sess-window"
+    session_path = tmp_path / f"{session_stem}.jsonl"
+
+    # Turn 1: dispatch + async_launched, completion 알림 없음 (sub 미완)
+    turn1_lines = [
+        {
+            "type": "user",
+            "uuid": "u-1",
+            "timestamp": "2026-04-23T10:00:00.000Z",
+            "message": {"role": "user", "content": "go"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a-1",
+            "timestamp": "2026-04-23T10:00:01.000Z",
+            "message": {
+                "id": "msg_main_1",
+                "role": "assistant",
+                "model": "claude-opus-4-7",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_async_W",
+                        "name": "Agent",
+                        "input": {"subagent_type": "general-purpose"},
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 50, "output_tokens": 10,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        },
+        {
+            "type": "user",
+            "uuid": "u-2",
+            "timestamp": "2026-04-23T10:00:02.000Z",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_async_W", "content": "launched"}
+                ],
+            },
+            "toolUseResult": {
+                "agentType": "general-purpose",
+                "agentId": "agent-window-1",
+                "status": "async_launched",
+            },
+        },
+    ]
+
+    with session_path.open("w", encoding="utf-8") as f:
+        for ln in turn1_lines:
+            f.write(json.dumps(ln) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    # Turn 2 시작: UserPromptSubmit이 file 끝(=turn 1 끝)을 offset으로 기록
+    payload = {
+        "session_id": "window-bug",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    # Turn 2 응답: 메인 assistant 1개, dispatch 없음. sub은 여전히 미완.
+    turn2_lines = [
+        {
+            "type": "user",
+            "uuid": "u-t2-1",
+            "timestamp": "2026-04-23T10:00:10.000Z",
+            "message": {"role": "user", "content": "next"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a-t2-1",
+            "timestamp": "2026-04-23T10:00:11.000Z",
+            "message": {
+                "id": "msg_main_2",
+                "role": "assistant",
+                "model": "claude-opus-4-7",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {
+                    "input_tokens": 5, "output_tokens": 5,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        },
+    ]
+    with session_path.open("a", encoding="utf-8") as f:
+        for ln in turn2_lines:
+            f.write(json.dumps(ln) + "\n")
+
+    # Turn 2 Stop. 기존(in-memory) 코드는 active=0으로 잘못 계산해 emit. fix 후엔
+    # active=1 (turn 1 dispatch, 미완) → silent 유지여야 한다.
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    # silent: stdout 비거나, JSON에 systemMessage 없음
+    if r.stdout.strip():
+        out = json.loads(r.stdout)
+        assert "systemMessage" not in out or not out.get("systemMessage"), (
+            f"expected silent output (active=1 from earlier turn dispatch), "
+            f"got: {r.stdout!r}"
+        )
+
+
 def test_error_path_emits_diagnostic(tmp_path):
     """An exception inside the hook should still produce a systemMessage and exit 0."""
     fake_home = tmp_path / "home"
