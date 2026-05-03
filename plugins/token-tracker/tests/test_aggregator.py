@@ -230,6 +230,57 @@ def test_aggregate_cache_hit_rate_includes_subagent_cache():
     assert math.isclose(s.cache_hit_rate, 900 / 1000)
 
 
+def test_dedupe_merges_tools_used_from_duplicate_message_id():
+    """Bug B: Claude Code splits a single API response into multiple JSONL lines
+    (thinking, tool_use, text). Each line shares the same message_id but
+    `tools_used` only appears on the tool_use line. dedupe was keeping the
+    first line (often thinking with tools_used=[]) and dropping subsequent
+    lines entirely → tools_used 손실 → detail 표 `툴` 칼럼이 모두 `—`.
+
+    fix: 같은 message_id 만나면 tools_used도 kept turn에 merge한다.
+    """
+    t1 = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=1, output_tokens=1,
+        cache_creation_tokens=0, cache_read_tokens=0,
+        message_id="m1",
+        tools_used=[],  # thinking line — empty tools
+    )
+    t2 = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=1, output_tokens=1,
+        cache_creation_tokens=0, cache_read_tokens=0,
+        message_id="m1",
+        tools_used=[{"name": "Bash", "count": 2}],  # tool_use line
+    )
+    out = aggregator._dedupe_by_message_id([t1, t2])
+    assert len(out) == 1
+    assert out[0].tools_used == [{"name": "Bash", "count": 2}]
+
+
+def test_dedupe_merges_tools_used_with_count_aggregation():
+    """같은 tool name이 여러 라인에 나뉘어 있으면 count가 합산돼야 한다."""
+    t1 = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=1, output_tokens=1,
+        cache_creation_tokens=0, cache_read_tokens=0,
+        message_id="m1",
+        tools_used=[{"name": "Read", "count": 1}],
+    )
+    t2 = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=1, output_tokens=1,
+        cache_creation_tokens=0, cache_read_tokens=0,
+        message_id="m1",
+        tools_used=[{"name": "Read", "count": 3}, {"name": "Bash", "count": 1}],
+    )
+    out = aggregator._dedupe_by_message_id([t1, t2])
+    assert len(out) == 1
+    # Read는 1+3=4, Bash는 신규 1. 순서는 stable (먼저 들어온 게 앞).
+    by_name = {item["name"]: item["count"] for item in out[0].tools_used}
+    assert by_name == {"Read": 4, "Bash": 1}
+
+
 def test_dedupe_merges_agent_tool_use_ids_from_duplicate_message_id():
     """Claude Code splits a single API response into multiple JSONL lines
     (thinking, text, tool_use). Each line shares the same message_id but only
