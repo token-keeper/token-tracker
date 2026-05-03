@@ -99,3 +99,38 @@ def test_load_skips_unsupported_schema(tmp_path, monkeypatch, capsys):
     out = load_session_history("s")
     assert out == []
     assert "unsupported schema_version" in capsys.readouterr().err
+
+
+def test_same_prompt_id_rewrites_last_line(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from lib.history_store import append_or_update_history, load_session_history
+
+    common = dict(
+        session_id="s", prompt_id="p_1", user_prompt_text="hello",
+        started_at=1.0, models_used=["claude-opus-4-7"],
+        has_subagent_other_model=False, transcript_entries=[],
+        summary_dict=_build_summary_dict(),
+    )
+    append_or_update_history(**{**common, "ended_at": 2.0})
+    append_or_update_history(**{**common, "ended_at": 5.0,
+                                 "transcript_entries": [{"type": "assistant_text", "ts": 3.0, "text": "x"}]})
+
+    out = load_session_history("s")
+    assert len(out) == 1
+    assert out[0]["ended_at"] == 5.0
+    assert out[0]["transcript_entries"] == [{"type": "assistant_text", "ts": 3.0, "text": "x"}]
+
+
+def test_different_prompt_id_appends_new_line(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from lib.history_store import append_or_update_history, load_session_history
+
+    common = dict(
+        session_id="s", user_prompt_text="x",
+        started_at=1.0, ended_at=2.0, summary_dict=_build_summary_dict(),
+        models_used=[], has_subagent_other_model=False, transcript_entries=[],
+    )
+    append_or_update_history(**{**common, "prompt_id": "p_1"})
+    append_or_update_history(**{**common, "prompt_id": "p_2"})
+    out = load_session_history("s")
+    assert [e["prompt_id"] for e in out] == ["p_1", "p_2"]

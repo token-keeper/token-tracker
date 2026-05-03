@@ -73,7 +73,9 @@ def append_or_update_history(
     has_subagent_other_model: bool,
     transcript_entries: list[dict],
 ) -> None:
-    """Append a new entry (Task 3 will add in-place rewrite for same prompt_id)."""
+    """Append a new entry, OR rewrite the last line in-place when the last
+    line's prompt_id matches `prompt_id` (spec §4.4 dedupe policy: one
+    user prompt = one row, even when multiple Stops fire)."""
     path = _history_path(session_id)
     envelope = _build_envelope(
         prompt_id=prompt_id, session_id=session_id,
@@ -84,12 +86,27 @@ def append_or_update_history(
         transcript_entries=transcript_entries,
     )
     new_line = json.dumps(envelope, ensure_ascii=False)
+
     existing: list[str] = []
     if path.exists():
         try:
-            existing = path.read_text(encoding="utf-8").splitlines()
+            existing = [
+                ln for ln in path.read_text(encoding="utf-8").splitlines()
+                if ln.strip()
+            ]
         except OSError:
             existing = []
+
+    if existing:
+        try:
+            last = json.loads(existing[-1])
+            if last.get("prompt_id") == prompt_id:
+                existing[-1] = new_line
+                _atomic_write_lines(path, existing)
+                return
+        except json.JSONDecodeError:
+            pass
+
     _atomic_write_lines(path, existing + [new_line])
 
 
