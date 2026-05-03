@@ -131,7 +131,7 @@ def test_last_summary_saved_after_stop(tmp_path):
     )
     assert summary_file.is_file(), f"last_summary.json not saved at {summary_file}"
     data = json.loads(summary_file.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert data["session_id"] == session_id
     assert isinstance(data["summary"]["turns"], list)
     assert len(data["summary"]["turns"]) >= 1
@@ -1371,10 +1371,10 @@ def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
     m = re.search(r"\$([0-9]+\.[0-9]+)", msg)
     assert m, f"expected $cost in output, got: {msg!r}"
     cost = float(m.group(1))
-    # Expected: 1M sub input * opus rate ($15/MTok) = $15.0 (NOT $0.0)
-    assert cost > 14.0, (
-        f"sub with unknown alias 'sonnet' should bill at parent (opus) rate "
-        f"(~$15.0), got ${cost} in: {msg!r}"
+    # Expected: 1M sub input * opus 4.7 rate ($5/MTok) = $5.0 (NOT $0.0 silent)
+    assert cost > 4.5, (
+        f"sub with unknown alias 'sonnet' should bill at parent (opus 4.7) rate "
+        f"(~$5.0), got ${cost} in: {msg!r}"
     )
 
 
