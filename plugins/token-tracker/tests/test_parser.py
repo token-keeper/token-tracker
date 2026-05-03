@@ -354,7 +354,7 @@ def test_parse_agent_tool_uses_single_agent_block():
         },
     }
     pairs = parser.parse_agent_tool_uses(entry)
-    assert pairs == [("toolu_a", "claude-code-guide")]
+    assert pairs == [("toolu_a", "claude-code-guide", "")]
 
 
 def test_parse_agent_tool_uses_multiple_agent_blocks():
@@ -387,9 +387,9 @@ def test_parse_agent_tool_uses_multiple_agent_blocks():
     }
     pairs = parser.parse_agent_tool_uses(entry)
     assert pairs == [
-        ("toolu_a", "claude-code-guide"),
-        ("toolu_b", "general-purpose"),
-        ("toolu_c", ""),
+        ("toolu_a", "claude-code-guide", ""),
+        ("toolu_b", "general-purpose", ""),
+        ("toolu_c", "", ""),
     ]
 
 
@@ -410,3 +410,84 @@ def test_parse_agent_tool_uses_returns_empty_for_non_assistant_or_no_agent():
     # malformed
     assert parser.parse_agent_tool_uses({}) == []
     assert parser.parse_agent_tool_uses({"type": "assistant"}) == []
+
+
+def test_parse_agent_tool_uses_extracts_model_when_present():
+    """input.model이 명시된 Agent dispatch는 (id, type, model) 트리플로 반환."""
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_1",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Agent",
+                    "id": "toolu_a",
+                    "input": {
+                        "subagent_type": "general-purpose",
+                        "model": "claude-haiku-4-5",
+                    },
+                },
+            ],
+        },
+    }
+    pairs = parser.parse_agent_tool_uses(entry)
+    assert pairs == [("toolu_a", "general-purpose", "claude-haiku-4-5")]
+
+
+def test_parse_agent_tool_uses_returns_empty_model_when_absent():
+    """input.model이 없으면 model은 빈 문자열."""
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_1",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Agent",
+                    "id": "toolu_a",
+                    "input": {"subagent_type": "general-purpose"},
+                },
+            ],
+        },
+    }
+    pairs = parser.parse_agent_tool_uses(entry)
+    assert pairs == [("toolu_a", "general-purpose", "")]
+
+
+def test_parse_sidechain_assistant_fills_model_from_message():
+    """sidechain assistant 라인의 message.model이 SubagentUsage.model에 들어가야 한다."""
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-04-23T12:34:56Z",
+        "message": {
+            "id": "msg_side_1",
+            "model": "claude-haiku-4-5",
+            "usage": {
+                "input_tokens": 7,
+                "output_tokens": 9,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+            "content": [],
+        },
+    }
+    sub = parser.parse_sidechain_assistant(
+        entry,
+        agent_type="general-purpose",
+        tool_use_id="toolu_async_1",
+    )
+    assert sub is not None
+    assert sub.model == "claude-haiku-4-5"
+
+
+def test_subagent_usage_default_model_is_empty():
+    sub = parser.SubagentUsage(
+        agent_type="general-purpose",
+        tool_use_id="tu",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_tokens=0,
+        cache_read_tokens=0,
+    )
+    assert sub.model == ""

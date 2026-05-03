@@ -601,6 +601,21 @@ def test_sidechain_async_subagent_tokens_included_in_summary(tmp_path):
                 "status": "async_launched",
             },
         },
+        # active=0 시점에서 emit 검증 — D 옵션 default가 silent를 유발하지 않게 completed 추가.
+        {
+            "type": "user",
+            "uuid": "u-done-1",
+            "timestamp": "2026-04-23T10:00:05.000Z",
+            "message": {
+                "role": "user",
+                "content": (
+                    "<task-notification>"
+                    "<task-id>agent-side-1</task-id>"
+                    "<status>completed</status>"
+                    "</task-notification>"
+                ),
+            },
+        },
     ]
     # Step 1: only user line is present at UserPromptSubmit time
     # so the recorded offset starts before assistant lines.
@@ -662,6 +677,704 @@ def test_sidechain_async_subagent_tokens_included_in_summary(tmp_path):
     toks = int(m.group(1).replace(",", ""))
     assert toks == 1260, (
         f"expected main(60) + sidechain(1200) = 1260 toks, got {toks} in: {msg!r}"
+    )
+
+
+def test_foreground_sub_model_filled_from_tool_use_input(tmp_path):
+    """foreground sub은 메인 jsonl의 Agent tool_use input.model에서 model이
+    채워져 last_summary.json에 저장돼야 한다."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_FG",
+                    "name": "Agent",
+                    "input": {
+                        "subagent_type": "general-purpose",
+                        "model": "claude-haiku-4-5",  # explicit dispatch model
+                    },
+                }
+            ],
+            "usage": {
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    fg_tool_result = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_FG", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "usage": {
+                "input_tokens": 100, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "totalDurationMs": 5000,
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    session_id = "fg-model"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+        f.write(json.dumps(fg_tool_result) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    data = json.loads(summary_file.read_text(encoding="utf-8"))
+    turns = data["summary"]["turns"]
+    assert len(turns) == 1
+    subs = turns[0]["subagents"]
+    assert len(subs) == 1
+    assert subs[0]["model"] == "claude-haiku-4-5"
+
+
+def test_systemMessage_omits_legend_when_all_subs_have_model(tmp_path):
+    """모든 sub의 model이 알려져 있으면 verbose 표 footer에 sub legend가 출력되지 않아야 한다."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_FG2",
+                    "name": "Agent",
+                    "input": {
+                        "subagent_type": "general-purpose",
+                        "model": "claude-haiku-4-5",
+                    },
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    fg_tool_result = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_FG2", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "usage": {
+                "input_tokens": 100, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "totalDurationMs": 5000,
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"
+
+    payload = {
+        "session_id": "no-legend",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+        f.write(json.dumps(fg_tool_result) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+    # ko legend text — should NOT appear when all sub models known
+    assert "subagent 비용은 부모 모델 단가로 추정" not in msg, (
+        f"legend should be omitted when all sub models known; got: {msg!r}"
+    )
+
+
+def test_stop_silent_when_async_agents_still_active(tmp_path):
+    """async background dispatch가 활성 중이면 systemMessage emit 생략 (옵션 D).
+
+    fixture: async_launched 라인 1개 + completed 알림 0개 → active=1 →
+    Stop hook은 stdout이 비어있어야 한다 (또는 systemMessage 없음).
+    단 last_summary는 여전히 저장돼서 active=0 시점의 emit이 누적치를 보여주도록.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BG",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BG", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bg-1",
+            "status": "async_launched",
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    # verbose off — silent path
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    session_id = "active-bg"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    # Silent: either empty stdout, or JSON without systemMessage
+    if r.stdout.strip():
+        out = json.loads(r.stdout)
+        assert "systemMessage" not in out or not out.get("systemMessage"), (
+            f"expected silent output while async agents active, got: {r.stdout!r}"
+        )
+
+    # last_summary는 그대로 저장돼야 한다 — emit만 silent.
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert summary_file.is_file(), (
+        "last_summary should still be persisted while async active"
+    )
+
+
+def test_stop_emits_when_all_async_agents_done(tmp_path):
+    """모든 async agent가 completed면 정상 emit (active=0)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BG2",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BG2", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bg-2",
+            "status": "async_launched",
+        },
+    }
+    completion_notification = {
+        "type": "user",
+        "uuid": "u-3",
+        "timestamp": "2026-04-23T10:00:10.000Z",
+        "message": {
+            "role": "user",
+            "content": (
+                "<task-notification>"
+                "<task-id>agent-bg-2</task-id>"
+                "<status>completed</status>"
+                "</task-notification>"
+            ),
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    payload = {
+        "session_id": "all-done",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+        f.write(json.dumps(completion_notification) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out.get("systemMessage", "")
+    assert "toks" in msg, f"expected normal emit when all async done, got: {msg!r}"
+
+
+def test_stop_emits_normally_when_no_async_dispatch(tmp_path):
+    """async dispatch가 아예 없는 일반 sync turn은 그대로 매번 emit (현재 동작 유지)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_bytes(FIXTURE.read_bytes())
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    payload = {
+        "session_id": "no-async",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "Stop",
+    }
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out.get("systemMessage", "")
+    assert "toks" in msg, f"sync-only stop should emit normally, got: {msg!r}"
+
+
+def test_stop_silent_when_async_active_even_with_verbose(tmp_path):
+    """verbose 모드여도 background sub agent 진행 중에는 silent (옵션 D default).
+
+    verbose는 "한 줄 요약 vs 상세 표"의 출력 형식 차이일 뿐, "언제 emit할지"는
+    active=0 시점 한 번이어야 한다. 진행 중에 매 Stop마다 끼어들면 안 됨.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BG3",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BG3", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bg-3",
+            "status": "async_launched",
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"  # verbose여도 active>0이면 silent
+
+    session_id = "verbose-bg-active"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    # Silent: empty stdout or JSON without systemMessage
+    if r.stdout.strip():
+        out = json.loads(r.stdout)
+        assert "systemMessage" not in out or not out.get("systemMessage"), (
+            f"expected silent output even in verbose while async active, got: {r.stdout!r}"
+        )
+
+    # last_summary는 silent 케이스에서도 정상 누적 갱신돼야 한다.
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert summary_file.is_file(), (
+        "last_summary should still be persisted while async active in verbose mode"
+    )
+
+
+def test_stop_emits_with_verbose_table_when_async_done(tmp_path):
+    """verbose=true + active=0이면 한 줄 요약 + 상세 표 둘 다 포함하여 emit."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_async_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_BGV",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }
+            ],
+            "usage": {
+                "input_tokens": 50, "output_tokens": 10,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    async_launched = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_BGV", "content": "launched"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "agentId": "agent-bgv",
+            "status": "async_launched",
+        },
+    }
+    completion_notification = {
+        "type": "user",
+        "uuid": "u-3",
+        "timestamp": "2026-04-23T10:00:10.000Z",
+        "message": {
+            "role": "user",
+            "content": (
+                "<task-notification>"
+                "<task-id>agent-bgv</task-id>"
+                "<status>completed</status>"
+                "</task-notification>"
+            ),
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"  # verbose ON
+
+    payload = {
+        "session_id": "verbose-bg-done",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_async_agent) + "\n")
+        f.write(json.dumps(async_launched) + "\n")
+        f.write(json.dumps(completion_notification) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out.get("systemMessage", "")
+    # 한 줄 요약 표시: "toks" 포함
+    assert "toks" in msg, f"expected one-line summary, got: {msg!r}"
+    # 상세 표 표시: detail_formatter가 만드는 표 헤더에 "Turn"과 "$"가 포함됨
+    # (verbose 표는 줄바꿈 + 표 형태 → 한 줄보다 길고 줄바꿈 다수 포함)
+    assert "\n" in msg, f"expected verbose table appended, got: {msg!r}"
+    assert msg.count("\n") >= 2, (
+        f"expected verbose detail table (multi-line), got: {msg!r}"
+    )
+
+
+def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
+    """v0.6.2 CRITICAL 회귀 가드.
+
+    풀체인: 메인 jsonl Agent tool_use input.model="sonnet" (unknown alias) +
+    completed tool_result. on_stop이 fg_sub.model="sonnet"으로 채우고,
+    aggregator/formatter가 silent $0이 아니라 부모(opus) 단가로 fallback해야 한다.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_with_agent = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_ALIAS",
+                    "name": "Agent",
+                    "input": {
+                        "subagent_type": "general-purpose",
+                        "model": "sonnet",  # short alias — NOT in PRICING table
+                    },
+                }
+            ],
+            "usage": {
+                "input_tokens": 0, "output_tokens": 0,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    fg_tool_result = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:02.000Z",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_ALIAS", "content": "ok"}
+            ],
+        },
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "usage": {
+                "input_tokens": 1_000_000, "output_tokens": 0,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+            "totalDurationMs": 5000,
+        },
+    }
+
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    payload = {
+        "session_id": "alias-fallback",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_with_agent) + "\n")
+        f.write(json.dumps(fg_tool_result) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+
+    # Cost extraction from one-liner: "$X.XXXX" near the start
+    import re
+    m = re.search(r"\$([0-9]+\.[0-9]+)", msg)
+    assert m, f"expected $cost in output, got: {msg!r}"
+    cost = float(m.group(1))
+    # Expected: 1M sub input * opus rate ($15/MTok) = $15.0 (NOT $0.0)
+    assert cost > 14.0, (
+        f"sub with unknown alias 'sonnet' should bill at parent (opus) rate "
+        f"(~$15.0), got ${cost} in: {msg!r}"
     )
 
 

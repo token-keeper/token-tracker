@@ -67,6 +67,7 @@ _SUB_KEYS = (
     "cache_creation_tokens",
     "cache_read_tokens",
     "total_duration_ms",
+    "model",
 )
 
 
@@ -76,8 +77,10 @@ def _turn_from_dict(raw: dict) -> TurnUsage:
     v1 turns may be missing `subagents` and `agent_tool_use_ids`. v2 turns
     include both, with `subagents` as a list of dicts that we lift back into
     SubagentUsage instances. Older v2 files may contain removed-since fields
-    (`agent_id`, `started_at`, `model` on subagents) — we filter via explicit
-    key-pickup rather than `**data`, so the unknown keys are silently dropped.
+    (`agent_id`, `started_at`) — we filter via explicit key-pickup rather than
+    `**data`, so unknown keys are silently dropped. Older v2 files written
+    before T12 may also lack `model` on subagents; the default empty string
+    on SubagentUsage handles that gracefully.
     """
     raw_subs = raw.get("subagents") or []
     subs: list[SubagentUsage] = []

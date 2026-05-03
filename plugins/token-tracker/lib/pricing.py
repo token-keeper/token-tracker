@@ -70,3 +70,16 @@ def compute_cost(model: str, usage: TurnUsage) -> float:
 
 def is_known_model(model: str) -> bool:
     return _resolve_rates(model) is not None
+
+
+def effective_billing_model(sub_model: str, parent_model: str) -> str:
+    """Pick the model id to bill a subagent's usage at.
+
+    Returns ``sub_model`` when it's a known pricing key (exact or prefix match);
+    otherwise falls back to ``parent_model``. This guards against unknown short
+    aliases like ``"sonnet"`` from ``Agent(model="sonnet")`` dispatch — without
+    this fallback, ``compute_cost("sonnet", sub)`` would silently return $0.
+    """
+    if sub_model and is_known_model(sub_model):
+        return sub_model
+    return parent_model

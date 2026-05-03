@@ -272,3 +272,40 @@ def test_aggregate_total_cost_uses_parent_model_rate_for_subagent():
     s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
     # parent cost = 0, sub cost = 1M * 15 / 1M = 15.0 (opus input rate)
     assert math.isclose(s.total_cost, 15.0, rel_tol=1e-6)
+
+
+def test_aggregate_uses_sub_model_for_cost_when_set():
+    """sub.model이 채워져 있으면 부모 단가가 아닌 sub 자체 단가로 비용 산정."""
+    parent = _mk(
+        model="claude-opus-4-7",
+        input_tokens=0, output_tokens=0, message_id="p1",
+    )
+    parent.agent_tool_use_ids = ["toolu_a"]
+    # sub: 1M input tokens, 자체 model = haiku → haiku input rate $1.0/MTok
+    sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000)
+    sub.model = "claude-haiku-4-5"
+    s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
+    # parent cost = 0, sub cost = 1M * 1.0 / 1M = 1.0 (haiku input rate, not opus $15)
+    assert math.isclose(s.total_cost, 1.0, rel_tol=1e-6)
+
+
+def test_aggregate_unknown_sub_model_short_alias_falls_back_to_parent_rate():
+    """sub.model이 short alias('sonnet' 등 unknown 값)면 silent $0이 아니라 부모 단가.
+
+    v0.6.2 CRITICAL 회귀 가드: `Agent(model="sonnet")` dispatch 시 parser가
+    sub.model="sonnet"을 채우면 truthy라 부모 fallback 안 됨 →
+    compute_cost("sonnet", sub) → _resolve_rates 못 찾음 → 0.0 silent return.
+    effective_billing_model로 unknown 키도 부모 단가로 떨어져야 한다.
+    """
+    parent = _mk(
+        model="claude-opus-4-7",
+        input_tokens=0, output_tokens=0, message_id="p1",
+    )
+    parent.agent_tool_use_ids = ["toolu_a"]
+    sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000)
+    sub.model = "sonnet"  # unknown alias — not in PRICING table
+    s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
+    # Expected fallback: 1M * $15 / 1M = 15.0 (opus input rate, NOT 0.0)
+    assert math.isclose(s.total_cost, 15.0, rel_tol=1e-6), (
+        f"unknown alias should fall back to parent rate, got cost={s.total_cost}"
+    )

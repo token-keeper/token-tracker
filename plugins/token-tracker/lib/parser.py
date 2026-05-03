@@ -34,6 +34,12 @@ class SubagentUsage:
     cache_creation_tokens: int
     cache_read_tokens: int
     total_duration_ms: int = 0
+    # Model used by this subagent run. Sources (in priority order):
+    #   1. async sub: sidechain jsonl `assistant.message.model` (most accurate)
+    #   2. foreground sub: main jsonl Agent `tool_use.input.model` (only when
+    #      caller dispatched with `model:` explicitly)
+    #   3. unknown: empty string → aggregator falls back to parent turn model
+    model: str = ""
 
 
 def _iso_to_epoch(iso: str) -> float | None:
@@ -45,13 +51,14 @@ def _iso_to_epoch(iso: str) -> float | None:
         return None
 
 
-def parse_agent_tool_uses(entry: dict) -> list[tuple[str, str]]:
-    """assistant 엔트리에서 (tool_use_id, subagent_type) 쌍을 모두 반환.
+def parse_agent_tool_uses(entry: dict) -> list[tuple[str, str, str]]:
+    """assistant 엔트리에서 (tool_use_id, subagent_type, model) 트리플을 모두 반환.
 
     assistant 라인이 아니거나 Agent tool_use 블록이 없으면 빈 리스트.
-    `subagent_type`은 `input.subagent_type`에서, 없으면 빈 문자열로 둔다.
-    이 헬퍼는 `parse_line`의 `agent_tool_use_ids` 수집과 sidechain 모듈의
-    async 매핑이 같은 jsonl 구조 해석을 공유하도록 만든다.
+    `subagent_type`은 `input.subagent_type`에서, `model`은 `input.model`에서.
+    둘 다 없으면 빈 문자열. `model`은 caller가 dispatch 시 명시한 경우만
+    채워지며, async sub은 sidechain의 `message.model`이 더 정확하므로
+    여기서 채운 값은 fallback용이다.
     """
     if not isinstance(entry, dict):
         return []
@@ -64,7 +71,7 @@ def parse_agent_tool_uses(entry: dict) -> list[tuple[str, str]]:
     if not isinstance(content, list):
         return []
 
-    pairs: list[tuple[str, str]] = []
+    triples: list[tuple[str, str, str]] = []
     for blk in content:
         if not isinstance(blk, dict):
             continue
@@ -77,8 +84,9 @@ def parse_agent_tool_uses(entry: dict) -> list[tuple[str, str]]:
             continue
         inp = blk.get("input") if isinstance(blk.get("input"), dict) else {}
         sa_type = inp.get("subagent_type") or ""
-        pairs.append((tu_id, str(sa_type)))
-    return pairs
+        model = inp.get("model") or ""
+        triples.append((tu_id, str(sa_type), str(model)))
+    return triples
 
 
 def parse_line(entry: dict) -> TurnUsage | None:
@@ -104,7 +112,7 @@ def parse_line(entry: dict) -> TurnUsage | None:
         {"name": name, "count": count}
         for name, count in counter.items()
     ]
-    agent_tool_use_ids = [tu_id for tu_id, _ in parse_agent_tool_uses(entry)]
+    agent_tool_use_ids = [tu_id for tu_id, _, _ in parse_agent_tool_uses(entry)]
 
     timestamp_iso = entry.get("timestamp", "")
 
@@ -223,4 +231,5 @@ def parse_sidechain_assistant(
         cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         total_duration_ms=0,
+        model=str(msg.get("model", "")),
     )

@@ -1,11 +1,41 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 
 from lib.aggregator import Summary
 from lib.i18n_loader import load_strings
 from lib.parser import SubagentUsage, TurnUsage
-from lib.pricing import compute_cost
+from lib.pricing import compute_cost, effective_billing_model, is_known_model
+
+
+# Sub-row label prefix for the agent_type. Kept as a module constant rather
+# than i18n key — the literal "sub:" reads identically in ko/en (KISS).
+_SUB_LABEL = "sub:"
+
+# Pattern for `claude-{family}-{major}-{minor}` with optional date/variant
+# suffix. Used by `_short_model_name` to render compact labels like
+# "opus 4.7" / "sonnet 4.6" / "haiku 4.5" in the model column.
+_MODEL_NAME_RE = re.compile(r"^claude-([a-z]+)-(\d+)-(\d+)(?:[-\[].*)?$")
+
+
+def _short_model_name(model: str) -> str:
+    """Compact display name for a Claude model id.
+
+    Examples:
+        claude-opus-4-7              -> opus 4.7
+        claude-opus-4-7[1m]          -> opus 4.7
+        claude-sonnet-4-6-20250101   -> sonnet 4.6
+        claude-haiku-4-5-20251001    -> haiku 4.5
+        unknown                      -> unknown (passthrough)
+    """
+    if not model:
+        return ""
+    m = _MODEL_NAME_RE.match(model)
+    if not m:
+        return model
+    family, major, minor = m.group(1), m.group(2), m.group(3)
+    return f"{family} {major}.{minor}"
 
 
 @dataclass
@@ -84,8 +114,20 @@ def _turn_time(turn: TurnUsage, next_turn: TurnUsage | None,
 
 
 def _sub_label(sub: SubagentUsage, prefix: str) -> str:
+    """Render the sub row's model-column label.
+
+    Format:
+        - model known: "{prefix}sub: {agent_type} [{short_model}]"
+        - model unknown: "{prefix}sub: {agent_type}"  (no brackets)
+
+    Brackets are dropped when model is empty so the row visibly signals
+    "this is the parent-model fallback" instead of showing "[]".
+    """
     name = sub.agent_type if sub.agent_type else "(unknown)"
-    return f"{prefix}{name}"
+    short = _short_model_name(getattr(sub, "model", ""))
+    if short:
+        return f"{prefix}{_SUB_LABEL} {name} [{short}]"
+    return f"{prefix}{_SUB_LABEL} {name}"
 
 
 def _sub_time_str(sub: SubagentUsage) -> str:
@@ -141,6 +183,7 @@ def format_detail(summary: Summary, language: str) -> str:
     rows: list[str] = []
     prior_sum = 0.0
     has_subagents = False
+    has_unknown_sub_model = False
     for i, turn in enumerate(summary.turns):
         next_turn = summary.turns[i + 1] if i + 1 < len(summary.turns) else None
         t_sec = _turn_time(turn, next_turn, prior_sum, summary.total_elapsed)
@@ -166,7 +209,15 @@ def format_detail(summary: Summary, language: str) -> str:
         # Child rows for subagents under this parent turn.
         for sub in turn.subagents:
             has_subagents = True
-            sub_cost = f"${compute_cost(turn.model, sub):.4f}"
+            sub_model = getattr(sub, "model", "")
+            # Treat both empty model and unknown aliases (e.g. "sonnet" from
+            # `Agent(model="sonnet")` dispatch) as "unknown" for the legend
+            # — both billing paths actually use the parent model rate.
+            if not is_known_model(sub_model):
+                has_unknown_sub_model = True
+            # Cost: same fallback rule as aggregator (single helper).
+            billing_model = effective_billing_model(sub_model, turn.model)
+            sub_cost = f"${compute_cost(billing_model, sub):.4f}"
             sub_cells = [
                 "",  # # column blank for child rows
                 _sub_label(sub, sub_prefix),
@@ -193,6 +244,9 @@ def format_detail(summary: Summary, language: str) -> str:
         rule,
         " " + s["legend"],
     ]
-    if has_subagents:
+    # Show "* subagent cost is estimated from parent model rate" only when
+    # at least one sub has an unknown model (so the disclaimer is accurate).
+    # If every sub model is known, billing is exact and the note would be wrong.
+    if has_subagents and has_unknown_sub_model:
         parts.append(" " + s["subagent_legend"])
     return "\n".join(parts)

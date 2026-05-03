@@ -68,11 +68,16 @@ def main() -> int:
             return 0
 
         from lib.state import load_state
-        from lib.parser import parse_line, parse_tool_result_for_agent
+        from lib.parser import (
+            parse_agent_tool_uses,
+            parse_line,
+            parse_tool_result_for_agent,
+        )
         from lib.aggregator import aggregate
         from lib.formatter import format_summary
         from lib.sidechain import (
             collect_sidechain_subagents,
+            count_active_async_agents,
             extract_async_launches,
             find_sidechain_dir,
         )
@@ -128,6 +133,18 @@ def main() -> int:
             if launches:
                 async_subs = collect_sidechain_subagents(sidechain_dir, launches)
 
+        # Foreground subs only have model info on the dispatching tool_use line.
+        # Walk every assistant entry once, build {tool_use_id: model}, and fill
+        # any fg_sub whose model is still empty.
+        tu_to_model: dict[str, str] = {}
+        for e in entries:
+            for tu_id, _t, model in parse_agent_tool_uses(e):
+                if model and tu_id not in tu_to_model:
+                    tu_to_model[tu_id] = model
+        for s in fg_subs:
+            if not s.model and s.tool_use_id in tu_to_model:
+                s.model = tu_to_model[s.tool_use_id]
+
         elapsed = max(0.0, time.time() - started_at)
         summary = aggregate(turns, elapsed=elapsed, subagents=fg_subs + async_subs)
 
@@ -144,11 +161,20 @@ def main() -> int:
 
         cfg = load_config(plugin_root)
         lang = get_language(cfg)
+        verbose = is_verbose(cfg, os.environ.get("TOKEN_TRACKER_VERBOSE"))
         msg = format_summary(summary, lang)
 
-        if is_verbose(cfg, os.environ.get("TOKEN_TRACKER_VERBOSE")) and summary.turns:
+        if verbose and summary.turns:
             from lib.detail_formatter import format_detail
             msg = msg + "\n" + format_detail(summary, lang)
+
+        # Async background dispatch UX (옵션 D): 활성 background agent가 1개라도
+        # 있으면 매 Stop마다 끼어드는 출력을 silent 처리. last_summary는 이미
+        # 위에서 저장됐으므로 사용자가 /token-detail로 누적치 확인 가능. 모두
+        # 끝난 시점의 Stop에서 1번만 emit. verbose는 "한 줄 요약 vs 상세 표"의
+        # 출력 형식 차이일 뿐 "언제 emit할지"에는 영향 주지 않는다.
+        if count_active_async_agents(entries) > 0:
+            return 0
 
         _emit(msg)
     except Exception:
