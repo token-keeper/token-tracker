@@ -937,3 +937,163 @@ def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):
     assert len(subs) == 1
     assert subs[0].input_tokens == 9
     assert subs[0].output_tokens == 8
+
+
+# ---------------------------------------------------------------------------
+# _completed_agent_ids — task-notification 형식별 매칭 회귀 가드 (T17)
+# ---------------------------------------------------------------------------
+
+
+def test_completed_agent_ids_from_queue_operation_line():
+    """type=queue-operation + 최상위 content가 XML 문자열 (실측 가장 흔한 형태).
+
+    회귀 시나리오: T16 이전 코드는 message.content와 attachment.content만 봤기
+    때문에 queue-operation 라인에 들어온 task-notification을 놓쳤다 → active가
+    줄지 않음. 이 형태도 잡아야 한다.
+    """
+    entry = {
+        "type": "queue-operation",
+        "content": (
+            "<task-notification>\n"
+            "<task-id>agent-queueop</task-id>\n"
+            "<status>completed</status>\n"
+            "</task-notification>"
+        ),
+    }
+    assert sidechain._completed_agent_ids(entry) == ["agent-queueop"]
+
+
+def test_completed_agent_ids_from_user_with_list_content():
+    """type=user, message.content가 list of dict 형태 (각 block의 text/content 필드).
+
+    Claude Code 일부 버전·세션 전환 케이스에서 task-notification이 user 라인의
+    tool_result block 안에 끼어 들어오는 경우가 있다. status=completed라면 이
+    경우도 권위 신호로 인정.
+    """
+    entry = {
+        "type": "user",
+        "message": {
+            "content": [
+                {"type": "tool_result", "tool_use_id": "tu_x", "content": "noise"},
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu_y",
+                    "content": (
+                        "preview line:\n"
+                        "<task-notification>"
+                        "<task-id>agent-listblock</task-id>"
+                        "<status>completed</status>"
+                        "</task-notification>"
+                    ),
+                },
+            ],
+        },
+    }
+    assert sidechain._completed_agent_ids(entry) == ["agent-listblock"]
+
+
+def test_completed_agent_ids_from_user_with_list_text_field():
+    """list block의 'text' 필드(예: assistant 응답 mirror)에 XML이 있어도 매칭."""
+    entry = {
+        "type": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "<task-notification>"
+                        "<task-id>agent-textfield</task-id>"
+                        "<status>completed</status>"
+                        "</task-notification>"
+                    ),
+                },
+            ],
+        },
+    }
+    assert sidechain._completed_agent_ids(entry) == ["agent-textfield"]
+
+
+def test_completed_agent_ids_from_attachment_prompt_field():
+    """type=attachment, attachment.prompt에 XML — 실측 attachment 라인의 표준 형태.
+
+    기존 코드는 attachment.content만 봤지만 실측 jsonl에서는 prompt 필드가 채워진다.
+    """
+    entry = {
+        "type": "attachment",
+        "attachment": {
+            "type": "queued_command",
+            "prompt": (
+                "<task-notification>"
+                "<task-id>agent-prompt</task-id>"
+                "<status>completed</status>"
+                "</task-notification>"
+            ),
+            "commandMode": "task-notification",
+        },
+    }
+    assert sidechain._completed_agent_ids(entry) == ["agent-prompt"]
+
+
+def test_completed_agent_ids_ignores_non_completed_in_list_block():
+    """list block 안의 status=running은 완료로 인정하지 않는다."""
+    entry = {
+        "type": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "content": (
+                        "<task-notification>"
+                        "<task-id>agent-running</task-id>"
+                        "<status>running</status>"
+                        "</task-notification>"
+                    ),
+                },
+            ],
+        },
+    }
+    assert sidechain._completed_agent_ids(entry) == []
+
+
+def test_completed_agent_ids_ignores_non_queue_operation_top_content():
+    """type이 queue-operation이 아닌데 top-level content에 XML이 있으면 무시.
+
+    상위 content 필드가 우연히 채워진 다른 타입에 영향 받지 않도록.
+    """
+    entry = {
+        "type": "system",
+        "content": (
+            "<task-notification>"
+            "<task-id>agent-noop</task-id>"
+            "<status>completed</status>"
+            "</task-notification>"
+        ),
+    }
+    assert sidechain._completed_agent_ids(entry) == []
+
+
+def test_count_active_from_file_with_queue_operation_completions(tmp_path):
+    """e2e 시뮬레이션: 3개 launch + 3개 queue-operation 완료 알림 → active=0.
+
+    실측 jsonl 형태(launch 라인 + queue-operation 라인)를 그대로 재현해서
+    `count_active_async_agents_from_file`이 모두 정상 매칭하는지 확인한다.
+    """
+    transcript = tmp_path / "session.jsonl"
+    entries: list[dict] = []
+    aids = ["agent-q1", "agent-q2", "agent-q3"]
+    for i, aid in enumerate(aids, start=1):
+        entries.extend(_async_launch_lines(f"toolu_{i}", aid))
+    for aid in aids:
+        entries.append({
+            "type": "queue-operation",
+            "content": (
+                f"<task-notification>\n"
+                f"<task-id>{aid}</task-id>\n"
+                f"<tool-use-id>toolu_x</tool-use-id>\n"
+                f"<status>completed</status>\n"
+                f"</task-notification>"
+            ),
+        })
+    _write_jsonl(transcript, entries)
+
+    assert sidechain.count_active_async_agents_from_file(str(transcript)) == 0
