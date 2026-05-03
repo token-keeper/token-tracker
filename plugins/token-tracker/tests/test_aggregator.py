@@ -5,11 +5,17 @@ from lib.parser import SubagentUsage, TurnUsage
 
 
 def _mk(model="claude-opus-4-7", **kw) -> TurnUsage:
+    # Phase B/C 마이그레이션 편의: legacy 테스트가 cache_creation_tokens=N으로
+    # 넘기면 5m tier에 매핑한다 (보수적 가정 — 1h는 더 비싸므로 5m으로 두면
+    # cost가 과소산정 위험 없이 균형). 신규 테스트는 5m/1h를 명시적으로 사용.
+    if "cache_creation_tokens" in kw:
+        kw["cache_creation_5m_tokens"] = kw.pop("cache_creation_tokens")
     defaults = dict(
         model=model,
         input_tokens=0,
         output_tokens=0,
-        cache_creation_tokens=0,
+        cache_creation_5m_tokens=0,
+        cache_creation_1h_tokens=0,
         cache_read_tokens=0,
     )
     defaults.update(kw)
@@ -56,7 +62,8 @@ def test_total_cost_sums_per_turn():
         _mk(model="claude-sonnet-4-6", input_tokens=1_000_000),
     ]
     s = aggregator.aggregate(ts, elapsed=0.0)
-    assert math.isclose(s.total_cost, 15.0 + 3.0, rel_tol=1e-6)
+    # Opus 4.7 신단가 input = $5/MT, Sonnet 4.6 input = $3/MT
+    assert math.isclose(s.total_cost, 5.0 + 3.0, rel_tol=1e-6)
 
 
 def test_dedupe_by_message_id():
@@ -69,7 +76,9 @@ def test_dedupe_by_message_id():
     ]
     s = aggregator.aggregate(ts, elapsed=0.0)
     # Should be charged once, not 3x.
-    expected_cost = (6 * 15 + 210 * 75 + 319489 * 18.75) / 1_000_000
+    # Opus 4.7 신단가: input $5, output $25, cache_creation_5m $6.25 (legacy
+    # cache_creation_tokens는 _mk가 5m으로 매핑).
+    expected_cost = (6 * 5 + 210 * 25 + 319489 * 6.25) / 1_000_000
     assert math.isclose(s.total_cost, expected_cost, rel_tol=1e-6)
     assert len(s.turns) == 1
 
@@ -125,7 +134,7 @@ def _mk_sub(
     tool_use_id: str,
     input_tokens: int = 0,
     output_tokens: int = 0,
-    cache_creation_tokens: int = 0,
+    cache_creation_tokens: int = 0,  # legacy alias → 5m tier로 매핑
     cache_read_tokens: int = 0,
     agent_type: str = "claude-code-guide",
 ) -> SubagentUsage:
@@ -134,7 +143,8 @@ def _mk_sub(
         tool_use_id=tool_use_id,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        cache_creation_tokens=cache_creation_tokens,
+        cache_creation_5m_tokens=cache_creation_tokens,
+        cache_creation_1h_tokens=0,
         cache_read_tokens=cache_read_tokens,
     )
 
@@ -242,14 +252,12 @@ def test_dedupe_merges_tools_used_from_duplicate_message_id():
     t1 = TurnUsage(
         model="claude-opus-4-7",
         input_tokens=1, output_tokens=1,
-        cache_creation_tokens=0, cache_read_tokens=0,
         message_id="m1",
         tools_used=[],  # thinking line — empty tools
     )
     t2 = TurnUsage(
         model="claude-opus-4-7",
         input_tokens=1, output_tokens=1,
-        cache_creation_tokens=0, cache_read_tokens=0,
         message_id="m1",
         tools_used=[{"name": "Bash", "count": 2}],  # tool_use line
     )
@@ -263,14 +271,12 @@ def test_dedupe_merges_tools_used_with_count_aggregation():
     t1 = TurnUsage(
         model="claude-opus-4-7",
         input_tokens=1, output_tokens=1,
-        cache_creation_tokens=0, cache_read_tokens=0,
         message_id="m1",
         tools_used=[{"name": "Read", "count": 1}],
     )
     t2 = TurnUsage(
         model="claude-opus-4-7",
         input_tokens=1, output_tokens=1,
-        cache_creation_tokens=0, cache_read_tokens=0,
         message_id="m1",
         tools_used=[{"name": "Read", "count": 3}, {"name": "Bash", "count": 1}],
     )
@@ -318,11 +324,11 @@ def test_aggregate_total_cost_uses_parent_model_rate_for_subagent():
         input_tokens=0, output_tokens=0, message_id="p1",
     )
     parent.agent_tool_use_ids = ["toolu_a"]
-    # sub: 1M input tokens → 부모(opus) 단가 = $15 (sub 자체에는 model 필드 없음)
+    # sub: 1M input tokens → 부모(opus 4.7 신단가 input $5) (sub.model 빈 문자열)
     sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000)
     s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
-    # parent cost = 0, sub cost = 1M * 15 / 1M = 15.0 (opus input rate)
-    assert math.isclose(s.total_cost, 15.0, rel_tol=1e-6)
+    # parent cost = 0, sub cost = 1M * $5 / 1M = $5.0 (opus 신단가 input rate)
+    assert math.isclose(s.total_cost, 5.0, rel_tol=1e-6)
 
 
 def test_aggregate_uses_sub_model_for_cost_when_set():
@@ -422,7 +428,7 @@ def test_aggregate_unknown_sub_model_short_alias_falls_back_to_parent_rate():
     sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000)
     sub.model = "sonnet"  # unknown alias — not in PRICING table
     s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
-    # Expected fallback: 1M * $15 / 1M = 15.0 (opus input rate, NOT 0.0)
-    assert math.isclose(s.total_cost, 15.0, rel_tol=1e-6), (
+    # Expected fallback: 1M * $5 / 1M = $5.0 (opus 4.7 신단가 input, NOT 0.0)
+    assert math.isclose(s.total_cost, 5.0, rel_tol=1e-6), (
         f"unknown alias should fall back to parent rate, got cost={s.total_cost}"
     )
