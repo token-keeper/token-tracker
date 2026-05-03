@@ -307,6 +307,23 @@ def test_detail_unknown_sub_model_alias_uses_parent_rate_for_row_cost():
     assert "$15.0000" in child_line, f"expected parent rate fallback in: {child_line!r}"
 
 
+def test_detail_formatter_renders_with_5m_1h_fields():
+    """detail_formatter가 신규 5m/1h 필드를 합산해 cache 칼럼에 표시.
+    Phase B에서 cache_creation_tokens 필드 제거 후 AttributeError 회귀 가드."""
+    summary = Summary(
+        total_cost=1.0, total_input_tokens=1000, total_output_tokens=100,
+        cache_hit_rate=0.5, total_elapsed=2.0,
+        turns=[TurnUsage(
+            model="claude-opus-4-7", input_tokens=10, output_tokens=20,
+            cache_creation_5m_tokens=300, cache_creation_1h_tokens=200,
+            cache_read_tokens=50, message_id="m1",
+        )],
+    )
+    text = format_detail(summary, "ko")
+    # cache 칼럼이 합산 500을 표시 (5m 300 + 1h 200)
+    assert "500" in text
+
+
 def test_detail_legend_present_when_sub_model_is_unknown_alias():
     """sub.model이 unknown alias여도 legend가 표시돼야 한다 (부모 단가 추정 중이므로)."""
     turn = _turn()

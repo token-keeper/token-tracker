@@ -197,7 +197,7 @@ def format_detail(summary: Summary, language: str) -> str:
             turn.model,
             _format_tools(turn.tools_used),
             f"{turn.input_tokens:,}",
-            f"{turn.cache_creation_tokens:,}",
+            f"{(turn.cache_creation_5m_tokens + turn.cache_creation_1h_tokens):,}",
             f"{turn.cache_read_tokens:,}",
             f"{turn.output_tokens:,}",
             cost,
@@ -223,7 +223,7 @@ def format_detail(summary: Summary, language: str) -> str:
                 _sub_label(sub, sub_prefix),
                 "",  # tools column blank for child rows (T6 future)
                 f"{sub.input_tokens:,}",
-                f"{sub.cache_creation_tokens:,}",
+                f"{(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens):,}",
                 f"{sub.cache_read_tokens:,}",
                 f"{sub.output_tokens:,}",
                 sub_cost,
