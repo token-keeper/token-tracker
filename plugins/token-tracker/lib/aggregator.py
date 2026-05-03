@@ -21,20 +21,43 @@ def _dedupe_by_message_id(turns: list[TurnUsage]) -> list[TurnUsage]:
     (one per content block: thinking, text, tool_use, etc.) but copies the
     same `usage` field into each. Count each unique message_id once, but
     **merge per-line state that may sit on different blocks** — specifically
-    `agent_tool_use_ids`, which only appears on the tool_use line.
+    `agent_tool_use_ids` and `tools_used`, which only appear on the tool_use
+    line. If the kept (first) line is the thinking line, both fields would
+    silently drop on subsequent lines without an explicit merge step.
     Turns without a message_id (old fixtures, malformed entries) are kept
     as-is since we cannot identify duplicates."""
     kept_by_mid: dict[str, TurnUsage] = {}
     out: list[TurnUsage] = []
     for t in turns:
         if t.message_id and t.message_id in kept_by_mid:
-            # extend the kept turn's agent_tool_use_ids (preserve order, dedupe ids)
             kept = kept_by_mid[t.message_id]
-            existing = set(kept.agent_tool_use_ids)
+            # 1) agent_tool_use_ids merge (preserve order, dedupe ids)
+            existing_ids = set(kept.agent_tool_use_ids)
             for tu_id in t.agent_tool_use_ids:
-                if tu_id and tu_id not in existing:
+                if tu_id and tu_id not in existing_ids:
                     kept.agent_tool_use_ids.append(tu_id)
-                    existing.add(tu_id)
+                    existing_ids.add(tu_id)
+            # 2) tools_used merge — name별 count 합산. 같은 message_id가 여러
+            # 라인에 같은 tool을 분산해 기록할 수 있으므로 이름 기준 누적.
+            by_name = {
+                item.get("name"): item
+                for item in kept.tools_used
+                if isinstance(item, dict) and item.get("name")
+            }
+            for item in t.tools_used:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                if not name:
+                    continue
+                if name in by_name:
+                    by_name[name]["count"] = (
+                        by_name[name].get("count", 0) + item.get("count", 0)
+                    )
+                else:
+                    new_item = dict(item)
+                    kept.tools_used.append(new_item)
+                    by_name[name] = new_item
             continue
         if t.message_id:
             kept_by_mid[t.message_id] = t
