@@ -1505,6 +1505,230 @@ def test_e2e_active_count_remains_when_dispatch_in_earlier_turn(tmp_path):
         )
 
 
+def test_offset_not_advanced_by_stop_so_summary_accumulates_across_turns(tmp_path):
+    """v0.6.4 회귀 가드 (offset 누적 정책).
+
+    한 사용자 입력에 메인이 여러 응답 turn(예: dispatch → 결과 도착
+    system_notification → 또 응답)을 만들면, on_stop은 매 발화마다 user_prompt
+    시점부터의 entries 전체를 read해 last_summary를 누적해야 한다. on_stop이
+    file_size로 offset을 갱신하면 두 번째 Stop의 last_summary가 두 번째 turn만
+    가져 sub 데이터가 흩어지는 회귀가 생긴다.
+
+    검증: 두 번 Stop을 호출해 두 번째 last_summary의 turns 길이 ≥ 2 +
+    total_input_tokens가 첫 번째보다 큼.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    assistant_turn_1 = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [{"type": "text", "text": "first response"}],
+            "usage": {
+                "input_tokens": 100, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    system_notification = {
+        "type": "user",
+        "uuid": "u-sys-1",
+        "timestamp": "2026-04-23T10:00:05.000Z",
+        "message": {
+            "role": "user",
+            "content": "<system-reminder>some notification</system-reminder>",
+        },
+    }
+    assistant_turn_2 = {
+        "type": "assistant",
+        "uuid": "a-2",
+        "timestamp": "2026-04-23T10:00:06.000Z",
+        "message": {
+            "id": "msg_main_2",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [{"type": "text", "text": "second response"}],
+            "usage": {
+                "input_tokens": 200, "output_tokens": 30,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+
+    # UserPromptSubmit: only user line present, offset=end-of-user-line
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    session_id = "accumulate"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    # First batch: only assistant turn 1 written → first Stop
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_turn_1) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r1 = _run("on_stop.py", payload, env)
+    assert r1.returncode == 0
+
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert summary_file.is_file()
+    snap1 = json.loads(summary_file.read_text(encoding="utf-8"))
+    turns1 = snap1["summary"]["turns"]
+    in_tokens_1 = snap1["summary"]["total_input_tokens"]
+    assert len(turns1) == 1, f"first stop should see 1 turn, got {len(turns1)}"
+
+    # Second batch: system_notification + assistant turn 2 appended → second Stop
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(system_notification) + "\n")
+        f.write(json.dumps(assistant_turn_2) + "\n")
+
+    r2 = _run("on_stop.py", payload, env)
+    assert r2.returncode == 0
+
+    snap2 = json.loads(summary_file.read_text(encoding="utf-8"))
+    turns2 = snap2["summary"]["turns"]
+    in_tokens_2 = snap2["summary"]["total_input_tokens"]
+
+    # Second Stop should accumulate turn 1 + turn 2 (offset NOT advanced by first Stop)
+    assert len(turns2) >= 2, (
+        f"second stop should accumulate turns from user_prompt onward, "
+        f"got {len(turns2)} turns: {turns2!r}"
+    )
+    assert in_tokens_2 > in_tokens_1, (
+        f"second snapshot tokens ({in_tokens_2}) must exceed first ({in_tokens_1})"
+    )
+
+
+def test_offset_resets_on_new_user_prompt(tmp_path):
+    """v0.6.4: 새 user_prompt가 들어오면 그 시점의 file_size가 새 offset.
+    이후 Stop은 그 시점부터 읽으므로 이전 user_prompt의 turn은 last_summary에서 제외.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+
+    user_line_1 = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "first"},
+    }
+    assistant_1 = {
+        "type": "assistant",
+        "uuid": "a-1",
+        "timestamp": "2026-04-23T10:00:01.000Z",
+        "message": {
+            "id": "msg_main_1",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [{"type": "text", "text": "first"}],
+            "usage": {
+                "input_tokens": 100, "output_tokens": 20,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    user_line_2 = {
+        "type": "user",
+        "uuid": "u-2",
+        "timestamp": "2026-04-23T10:00:10.000Z",
+        "message": {"role": "user", "content": "second"},
+    }
+    assistant_2 = {
+        "type": "assistant",
+        "uuid": "a-2",
+        "timestamp": "2026-04-23T10:00:11.000Z",
+        "message": {
+            "id": "msg_main_2",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [{"type": "text", "text": "second"}],
+            "usage": {
+                "input_tokens": 7, "output_tokens": 3,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+
+    # First user_prompt + first assistant + first Stop (full cycle for prompt 1)
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line_1) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+
+    session_id = "reset-offset"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_1) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    assert _run("on_stop.py", payload, env).returncode == 0
+
+    # Second user_prompt arrives (offset reset to current file_size)
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(user_line_2) + "\n")
+
+    payload["hook_event_name"] = "UserPromptSubmit"
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(assistant_2) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    assert _run("on_stop.py", payload, env).returncode == 0
+
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    snap = json.loads(summary_file.read_text(encoding="utf-8"))
+    turns = snap["summary"]["turns"]
+    # Second user_prompt's offset only sees assistant_2 (input=7, output=3) — NOT assistant_1.
+    assert len(turns) == 1, (
+        f"new user_prompt offset should exclude prior turn; got {len(turns)} turns"
+    )
+    # input_tokens=7 from assistant_2; if offset wasn't reset, would also include assistant_1's 100.
+    assert snap["summary"]["total_input_tokens"] == 7, (
+        f"expected only assistant_2 input tokens (7), got {snap['summary']['total_input_tokens']}"
+    )
+
+
 def test_error_path_emits_diagnostic(tmp_path):
     """An exception inside the hook should still produce a systemMessage and exit 0."""
     fake_home = tmp_path / "home"
