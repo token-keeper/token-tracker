@@ -30,7 +30,8 @@ def test_parse_simple_assistant_line():
     assert t.model == "claude-opus-4-7"
     assert t.input_tokens == 10
     assert t.output_tokens == 5
-    assert t.cache_creation_tokens == 0
+    assert t.cache_creation_5m_tokens == 0
+    assert t.cache_creation_1h_tokens == 0
     assert t.cache_read_tokens == 0
     assert t.tools_used == []
 
@@ -189,7 +190,8 @@ def test_parse_tool_result_extracts_completed_agent_usage():
     assert sub.tool_use_id == "toolu_parent_001"
     assert sub.input_tokens == 100
     assert sub.output_tokens == 200
-    assert sub.cache_creation_tokens == 50
+    assert sub.cache_creation_5m_tokens == 50
+    assert sub.cache_creation_1h_tokens == 0
     assert sub.cache_read_tokens == 1000
     assert sub.total_duration_ms == 12345
 
@@ -262,7 +264,8 @@ def test_parse_sidechain_assistant_extracts_usage():
     assert sub.tool_use_id == "toolu_async_1"
     assert sub.input_tokens == 7
     assert sub.output_tokens == 9
-    assert sub.cache_creation_tokens == 11
+    assert sub.cache_creation_5m_tokens == 11
+    assert sub.cache_creation_1h_tokens == 0
     assert sub.cache_read_tokens == 13
     assert sub.total_duration_ms == 0
 
@@ -489,7 +492,8 @@ def test_subagent_usage_default_model_is_empty():
         tool_use_id="tu",
         input_tokens=0,
         output_tokens=0,
-        cache_creation_tokens=0,
+        cache_creation_5m_tokens=0,
+        cache_creation_1h_tokens=0,
         cache_read_tokens=0,
     )
     assert sub.model == ""
