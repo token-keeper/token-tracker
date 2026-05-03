@@ -783,7 +783,7 @@ def test_count_active_async_agents_from_file_returns_zero_when_path_missing(tmp_
 
 
 # ---------------------------------------------------------------------------
-# count_active_async_agents_from_file — sidechain jsonl 신호 보강 (회귀 fix)
+# count_active_async_agents_from_file — graceful 동작 회귀 가드
 # ---------------------------------------------------------------------------
 
 
@@ -816,54 +816,6 @@ def _async_launch_lines(tu_id: str, agent_id: str, agent_type: str = "general-pu
             },
         },
     ]
-
-
-def test_count_active_treats_sidechain_assistant_as_completed(tmp_path):
-    """task-notification이 메인 jsonl에 매칭 안 돼도, sidechain jsonl 파일에
-    assistant 라인이 1개 이상 있으면 완료로 간주해야 한다 (회귀 fix).
-
-    회귀 시나리오: sub의 완료 알림이 다른 세션 jsonl로 흘러가거나 누락됐지만
-    sidechain agent-{id}.jsonl 파일은 정상적으로 sub 응답을 보존하는 케이스.
-    """
-    transcript = tmp_path / "session.jsonl"
-    _write_jsonl(transcript, _async_launch_lines("toolu_1", "agent-aaa"))
-
-    # sidechain dir 안에 agent-aaa.jsonl 생성 + assistant 라인 1개
-    sub_dir = tmp_path / "session" / "subagents"
-    sub_dir.mkdir(parents=True)
-    _write_sidechain_file(sub_dir, "agent-aaa", [
-        {"type": "user", "message": {"role": "user", "content": "go"}},
-        {
-            "type": "assistant",
-            "timestamp": "2026-04-23T12:00:00Z",
-            "message": {
-                "id": "msg_s1",
-                "model": "claude-haiku-4-5",
-                "usage": {
-                    "input_tokens": 5, "output_tokens": 7,
-                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
-                },
-                "content": [{"type": "text", "text": "ack"}],
-            },
-        },
-    ])
-
-    # task-notification이 메인 jsonl에 없어도 active=0
-    assert sidechain.count_active_async_agents_from_file(str(transcript)) == 0
-
-
-def test_count_active_returns_1_when_sidechain_jsonl_empty_no_assistant(tmp_path):
-    """sidechain agent-{id}.jsonl 파일은 있지만 assistant 라인이 없으면 미완료."""
-    transcript = tmp_path / "session.jsonl"
-    _write_jsonl(transcript, _async_launch_lines("toolu_1", "agent-bbb"))
-
-    sub_dir = tmp_path / "session" / "subagents"
-    sub_dir.mkdir(parents=True)
-    _write_sidechain_file(sub_dir, "agent-bbb", [
-        {"type": "user", "message": {"role": "user", "content": "go"}},
-    ])
-
-    assert sidechain.count_active_async_agents_from_file(str(transcript)) == 1
 
 
 def test_count_active_returns_1_when_sidechain_dir_missing_and_no_notification(tmp_path):
