@@ -83,6 +83,14 @@ def test_script_outputs_err_unsupported_schema(tmp_path):
     assert ("호환되지 않습니다" in result.stdout) or ("not compatible" in result.stdout)
 
 
+def test_detail_script_v3_in_supported_versions():
+    """detail.py 안의 schema_version 화이트리스트에 3이 포함됨.
+    summary_store SCHEMA_VERSION v3 bump와 동기화 보장 (CRITICAL #2)."""
+    src = SCRIPT.read_text(encoding="utf-8")
+    # `not in (3,)` 또는 3이 포함된 화이트리스트 패턴
+    assert "(3,)" in src or "3 in" in src or ", 3)" in src or ", 3," in src
+
+
 def test_script_accepts_v2_schema(tmp_path):
     payload = _valid_summary_payload("sess-v2")
     payload["schema_version"] = 2

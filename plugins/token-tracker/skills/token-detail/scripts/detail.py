@@ -55,7 +55,7 @@ def main(argv: list[str]) -> int:
                 return 0
             try:
                 data = json.loads(candidate.read_text(encoding="utf-8"))
-                if data.get("schema_version") not in (1, 2):
+                if data.get("schema_version") not in (3,):
                     print(strings["err_unsupported_schema"])
                     return 0
             except Exception:
