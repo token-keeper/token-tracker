@@ -10,8 +10,12 @@ class TurnUsage:
     model: str
     input_tokens: int
     output_tokens: int
-    cache_creation_tokens: int
-    cache_read_tokens: int
+    # 제거: cache_creation_tokens
+    # 신규 — default와 fallback의 1h 값(0)은 동일. 5m 값은 의미 다름:
+    #   default=값 없음, fallback=legacy 합산값을 5m로 매핑한 양수일 수 있음.
+    cache_creation_5m_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
+    cache_read_tokens: int = 0
     tools_used: list[dict] = field(default_factory=list)  # [{"name": str, "count": int}]
     timestamp_iso: str = ""
     message_id: str = ""
@@ -31,8 +35,10 @@ class SubagentUsage:
     tool_use_id: str
     input_tokens: int
     output_tokens: int
-    cache_creation_tokens: int
-    cache_read_tokens: int
+    # 제거: cache_creation_tokens
+    cache_creation_5m_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
+    cache_read_tokens: int = 0
     total_duration_ms: int = 0
     # Model used by this subagent run. Sources (in priority order):
     #   1. async sub: sidechain jsonl `assistant.message.model` (most accurate)
@@ -101,6 +107,16 @@ def parse_line(entry: dict) -> TurnUsage | None:
     if not isinstance(usage, dict):
         return None
 
+    # cache_creation tier 분리 추출 (spec §4)
+    cc = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+    cache_5m = int(cc.get("ephemeral_5m_input_tokens", 0))
+    cache_1h = int(cc.get("ephemeral_1h_input_tokens", 0))
+    if not cc:
+        # fallback: 옛 entry는 합산값을 5m로 간주 (방향: underbill).
+        # 진단 결과 이 path는 실전 dead code이지만 옛 fixture 호환 위해 유지.
+        cache_5m = int(usage.get("cache_creation_input_tokens", 0))
+        cache_1h = 0
+
     content = msg.get("content") or []
     raw_names = [
         blk.get("name", "")
@@ -120,7 +136,8 @@ def parse_line(entry: dict) -> TurnUsage | None:
         model=msg.get("model", ""),
         input_tokens=int(usage.get("input_tokens", 0)),
         output_tokens=int(usage.get("output_tokens", 0)),
-        cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
+        cache_creation_5m_tokens=cache_5m,
+        cache_creation_1h_tokens=cache_1h,
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         tools_used=tools_used,
         timestamp_iso=timestamp_iso,
@@ -168,12 +185,20 @@ def parse_tool_result_for_agent(entry: dict) -> SubagentUsage | None:
     tool_use_id = _extract_tool_use_id(entry)
     usage = tur.get("usage") if isinstance(tur.get("usage"), dict) else {}
 
+    cc = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+    cache_5m = int(cc.get("ephemeral_5m_input_tokens", 0))
+    cache_1h = int(cc.get("ephemeral_1h_input_tokens", 0))
+    if not cc:
+        cache_5m = int(usage.get("cache_creation_input_tokens", 0))
+        cache_1h = 0
+
     return SubagentUsage(
         agent_type=str(agent_type),
         tool_use_id=tool_use_id,
         input_tokens=int(usage.get("input_tokens", 0)),
         output_tokens=int(usage.get("output_tokens", 0)),
-        cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
+        cache_creation_5m_tokens=cache_5m,
+        cache_creation_1h_tokens=cache_1h,
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         total_duration_ms=int(tur.get("totalDurationMs", 0) or 0),
     )
@@ -223,12 +248,20 @@ def parse_sidechain_assistant(
     if not isinstance(usage, dict):
         return None
 
+    cc = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
+    cache_5m = int(cc.get("ephemeral_5m_input_tokens", 0))
+    cache_1h = int(cc.get("ephemeral_1h_input_tokens", 0))
+    if not cc:
+        cache_5m = int(usage.get("cache_creation_input_tokens", 0))
+        cache_1h = 0
+
     return SubagentUsage(
         agent_type=agent_type,
         tool_use_id=tool_use_id,
         input_tokens=int(usage.get("input_tokens", 0)),
         output_tokens=int(usage.get("output_tokens", 0)),
-        cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
+        cache_creation_5m_tokens=cache_5m,
+        cache_creation_1h_tokens=cache_1h,
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         total_duration_ms=0,
         model=str(msg.get("model", "")),

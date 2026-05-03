@@ -131,7 +131,7 @@ def test_last_summary_saved_after_stop(tmp_path):
     )
     assert summary_file.is_file(), f"last_summary.json not saved at {summary_file}"
     data = json.loads(summary_file.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert data["session_id"] == session_id
     assert isinstance(data["summary"]["turns"], list)
     assert len(data["summary"]["turns"]) >= 1
@@ -1371,10 +1371,10 @@ def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
     m = re.search(r"\$([0-9]+\.[0-9]+)", msg)
     assert m, f"expected $cost in output, got: {msg!r}"
     cost = float(m.group(1))
-    # Expected: 1M sub input * opus rate ($15/MTok) = $15.0 (NOT $0.0)
-    assert cost > 14.0, (
-        f"sub with unknown alias 'sonnet' should bill at parent (opus) rate "
-        f"(~$15.0), got ${cost} in: {msg!r}"
+    # Expected: 1M sub input * opus 4.7 rate ($5/MTok) = $5.0 (NOT $0.0 silent)
+    assert cost > 4.5, (
+        f"sub with unknown alias 'sonnet' should bill at parent (opus 4.7) rate "
+        f"(~$5.0), got ${cost} in: {msg!r}"
     )
 
 
@@ -2068,3 +2068,101 @@ def test_e2e_sub_visible_when_dispatch_and_result_in_distinct_turns_after_task_n
     assert in_total >= expected_subs_input, (
         f"sub input tokens not included; got {in_total}, expected ≥ {expected_subs_input}"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase E (Plan Task 12): 신규 e2e 3건
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_e2e_pricing_with_real_transcript_shape():
+    """진단에서 캡처한 1h-heavy 실제 shape으로 cost 정확 계산."""
+    from lib.parser import parse_line
+    from lib.aggregator import aggregate
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_real",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 6,
+                "output_tokens": 1058,
+                "cache_read_input_tokens": 15433,
+                "cache_creation_input_tokens": 42180,  # legacy
+                "cache_creation": {
+                    "ephemeral_1h_input_tokens": 42180,
+                    "ephemeral_5m_input_tokens": 0,
+                },
+            },
+            "content": [],
+        },
+        "timestamp": "2026-05-03T10:00:00Z",
+    }
+    t = parse_line(entry)
+    s = aggregate([t], elapsed=1.0)
+    expected = (
+        6 * 5.0 / 1_000_000
+        + 1058 * 25.0 / 1_000_000
+        + 42180 * 10.0 / 1_000_000
+        + 15433 * 0.50 / 1_000_000
+    )
+    assert abs(s.total_cost - expected) < 1e-6
+
+
+def test_e2e_v2_summary_load_returns_none_then_next_save_creates_v3_at_same_path(tmp_path, monkeypatch):
+    """v2 파일은 None 반환 → 다음 save가 같은 경로에 v3로 덮어쓰기 (자연 마이그레이션)."""
+    from lib import summary_store, paths
+    from lib.aggregator import Summary
+    from lib.parser import TurnUsage
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path)
+    sid = "test_natural_migration"
+    sdir = tmp_path / sid
+    sdir.mkdir()
+    target = sdir / "last_summary.json"
+    target.write_text(json.dumps({
+        "schema_version": 2,
+        "session_id": sid,
+        "saved_at": 0,
+        "summary": {"total_cost": 0.5, "total_input_tokens": 100,
+                    "total_output_tokens": 50, "cache_hit_rate": 0.0,
+                    "total_elapsed": 1.0, "turns": []},
+    }))
+    assert summary_store.load_last_summary(sid) is None
+
+    new_summary = Summary(
+        total_cost=0.1, total_input_tokens=10, total_output_tokens=5,
+        cache_hit_rate=0.0, total_elapsed=0.5,
+        turns=[TurnUsage(model="claude-opus-4-7", input_tokens=1, output_tokens=1,
+                         cache_creation_5m_tokens=0, cache_creation_1h_tokens=0,
+                         cache_read_tokens=0, message_id="m_new")],
+    )
+    summary_store.save_last_summary(sid, new_summary)
+
+    assert target.exists()
+    with target.open() as f:
+        data = json.load(f)
+    assert data["schema_version"] == 3
+
+
+def test_e2e_detail_renders_after_v3_save(tmp_path, monkeypatch):
+    """v3 save → load → detail formatter rendering OK (CRITICAL #1, #2 회귀 가드)."""
+    from lib import summary_store, paths
+    from lib.aggregator import Summary
+    from lib.parser import TurnUsage
+    from lib.detail_formatter import format_detail
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path)
+    sid = "test_detail_e2e"
+    summary = Summary(
+        total_cost=0.1, total_input_tokens=550, total_output_tokens=20,
+        cache_hit_rate=0.5, total_elapsed=1.0,
+        turns=[TurnUsage(
+            model="claude-opus-4-7", input_tokens=10, output_tokens=20,
+            cache_creation_5m_tokens=300, cache_creation_1h_tokens=200,
+            cache_read_tokens=50, message_id="m_e2e",
+        )],
+    )
+    summary_store.save_last_summary(sid, summary)
+    loaded = summary_store.load_last_summary(sid)
+    assert loaded is not None
+    text = format_detail(loaded, language="ko")
+    assert "500" in text  # 5m 300 + 1h 200

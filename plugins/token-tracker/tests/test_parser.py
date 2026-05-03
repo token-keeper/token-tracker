@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from lib import parser
 
 
@@ -28,7 +30,8 @@ def test_parse_simple_assistant_line():
     assert t.model == "claude-opus-4-7"
     assert t.input_tokens == 10
     assert t.output_tokens == 5
-    assert t.cache_creation_tokens == 0
+    assert t.cache_creation_5m_tokens == 0
+    assert t.cache_creation_1h_tokens == 0
     assert t.cache_read_tokens == 0
     assert t.tools_used == []
 
@@ -187,7 +190,8 @@ def test_parse_tool_result_extracts_completed_agent_usage():
     assert sub.tool_use_id == "toolu_parent_001"
     assert sub.input_tokens == 100
     assert sub.output_tokens == 200
-    assert sub.cache_creation_tokens == 50
+    assert sub.cache_creation_5m_tokens == 50
+    assert sub.cache_creation_1h_tokens == 0
     assert sub.cache_read_tokens == 1000
     assert sub.total_duration_ms == 12345
 
@@ -260,7 +264,8 @@ def test_parse_sidechain_assistant_extracts_usage():
     assert sub.tool_use_id == "toolu_async_1"
     assert sub.input_tokens == 7
     assert sub.output_tokens == 9
-    assert sub.cache_creation_tokens == 11
+    assert sub.cache_creation_5m_tokens == 11
+    assert sub.cache_creation_1h_tokens == 0
     assert sub.cache_read_tokens == 13
     assert sub.total_duration_ms == 0
 
@@ -487,7 +492,172 @@ def test_subagent_usage_default_model_is_empty():
         tool_use_id="tu",
         input_tokens=0,
         output_tokens=0,
-        cache_creation_tokens=0,
+        cache_creation_5m_tokens=0,
+        cache_creation_1h_tokens=0,
         cache_read_tokens=0,
     )
     assert sub.model == ""
+
+
+def test_turn_usage_has_separate_5m_and_1h_fields():
+    """TurnUsage가 cache_creation_5m_tokens / cache_creation_1h_tokens 두 필드를 가짐."""
+    from lib.parser import TurnUsage
+    t = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=10,
+        output_tokens=20,
+        cache_creation_5m_tokens=100,
+        cache_creation_1h_tokens=200,
+        cache_read_tokens=50,
+    )
+    assert t.cache_creation_5m_tokens == 100
+    assert t.cache_creation_1h_tokens == 200
+    assert not hasattr(t, "cache_creation_tokens")  # 옛 필드 제거 확인
+
+
+def test_subagent_usage_has_separate_5m_and_1h_fields():
+    from lib.parser import SubagentUsage
+    s = SubagentUsage(
+        agent_type="general-purpose",
+        tool_use_id="x",
+        input_tokens=1,
+        output_tokens=2,
+        cache_creation_5m_tokens=300,
+        cache_creation_1h_tokens=400,
+        cache_read_tokens=5,
+    )
+    assert s.cache_creation_5m_tokens == 300
+    assert s.cache_creation_1h_tokens == 400
+    assert not hasattr(s, "cache_creation_tokens")
+
+
+@pytest.mark.parametrize("c5m,c1h", [(0, 0), (100, 0), (0, 200), (100, 200)])
+def test_parse_line_extracts_5m_and_1h_matrix(c5m, c1h):
+    from lib.parser import parse_line
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_1",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 20,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": c5m,
+                    "ephemeral_1h_input_tokens": c1h,
+                },
+            },
+            "content": [],
+        },
+        "timestamp": "2026-05-03T10:00:00Z",
+    }
+    t = parse_line(entry)
+    assert t is not None
+    assert t.cache_creation_5m_tokens == c5m
+    assert t.cache_creation_1h_tokens == c1h
+
+
+def test_parse_line_falls_back_to_legacy_when_no_cache_creation_obj():
+    """구버전 entry: cache_creation 중첩 객체 없으면 합산값을 5m로 간주."""
+    from lib.parser import parse_line
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_2",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 999,
+            },
+            "content": [],
+        },
+        "timestamp": "2026-05-03T10:00:00Z",
+    }
+    t = parse_line(entry)
+    assert t is not None
+    assert t.cache_creation_5m_tokens == 999
+    assert t.cache_creation_1h_tokens == 0
+
+
+def test_parse_sidechain_assistant_extracts_5m_1h():
+    from lib.parser import parse_sidechain_assistant
+    entry = {
+        "type": "assistant",
+        "message": {
+            "model": "claude-haiku-4-5",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 20,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 100,
+                    "ephemeral_1h_input_tokens": 200,
+                },
+            },
+        },
+    }
+    s = parse_sidechain_assistant(entry, "general-purpose", "tu_1")
+    assert s is not None
+    assert s.cache_creation_5m_tokens == 100
+    assert s.cache_creation_1h_tokens == 200
+    assert s.model == "claude-haiku-4-5"
+
+
+def test_parse_tool_result_for_agent_extracts_5m_1h():
+    from lib.parser import parse_tool_result_for_agent
+    entry = {
+        "type": "user",
+        "toolUseResult": {
+            "agentType": "general-purpose",
+            "status": "completed",
+            "totalDurationMs": 1234,
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 20,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 100,
+                    "ephemeral_1h_input_tokens": 200,
+                },
+            },
+        },
+        "message": {
+            "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}],
+        },
+    }
+    s = parse_tool_result_for_agent(entry)
+    assert s is not None
+    assert s.cache_creation_5m_tokens == 100
+    assert s.cache_creation_1h_tokens == 200
+
+
+def test_parse_line_prefers_nested_cc_when_both_present():
+    """이중 카운팅 회귀 가드: 중첩 객체와 legacy가 동시에 박혀도 중첩만 사용."""
+    from lib.parser import parse_line
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": "msg_3",
+            "model": "claude-opus-4-7",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 3000,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 1000,
+                    "ephemeral_1h_input_tokens": 2000,
+                },
+            },
+            "content": [],
+        },
+        "timestamp": "2026-05-03T10:00:00Z",
+    }
+    t = parse_line(entry)
+    assert t is not None
+    assert t.cache_creation_5m_tokens == 1000
+    assert t.cache_creation_1h_tokens == 2000
+    assert (t.cache_creation_5m_tokens + t.cache_creation_1h_tokens) == 3000

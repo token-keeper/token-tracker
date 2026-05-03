@@ -5,9 +5,14 @@ from lib.pricing import compute_cost
 
 
 def _turn(**overrides):
+    # Phase D 마이그레이션 편의: legacy 호출이 cache_creation_tokens=N으로
+    # 호출하면 보수적으로 5m tier(가격 동일)에 매핑.
+    if "cache_creation_tokens" in overrides:
+        overrides["cache_creation_5m_tokens"] = overrides.pop("cache_creation_tokens")
     base = dict(
         model="claude-opus-4-7", input_tokens=100, output_tokens=50,
-        cache_creation_tokens=0, cache_read_tokens=0,
+        cache_creation_5m_tokens=0, cache_creation_1h_tokens=0,
+        cache_read_tokens=0,
         tools_used=[], timestamp_iso="", message_id="m",
         index=0,
     )
@@ -19,7 +24,8 @@ def _summary(turns):
     return Summary(
         total_cost=0.01,
         total_input_tokens=sum(
-            t.input_tokens + t.cache_read_tokens + t.cache_creation_tokens
+            t.input_tokens + t.cache_read_tokens
+            + t.cache_creation_5m_tokens + t.cache_creation_1h_tokens
             for t in turns
         ),
         total_output_tokens=sum(t.output_tokens for t in turns),
@@ -111,12 +117,17 @@ def test_legend_included():
 
 
 def _sub(**overrides):
+    # Phase D 마이그레이션 편의: legacy 호출이 cache_creation_tokens=N으로
+    # 호출하면 보수적으로 5m tier(가격 동일)에 매핑.
+    if "cache_creation_tokens" in overrides:
+        overrides["cache_creation_5m_tokens"] = overrides.pop("cache_creation_tokens")
     base = dict(
         agent_type="claude-code-guide",
         tool_use_id="tu-1",
         input_tokens=4,
         output_tokens=368,
-        cache_creation_tokens=10506,
+        cache_creation_5m_tokens=10506,
+        cache_creation_1h_tokens=0,
         cache_read_tokens=23497,
         total_duration_ms=19500,
     )
@@ -303,8 +314,25 @@ def test_detail_unknown_sub_model_alias_uses_parent_rate_for_row_cost():
     turn.subagents = [sub]
     out = format_detail(_summary([turn]), "ko")
     child_line = next(l for l in out.splitlines() if "└" in l)
-    # opus input rate = \$15.0/MTok → \$15.0000 (NOT \$0.0000)
-    assert "$15.0000" in child_line, f"expected parent rate fallback in: {child_line!r}"
+    # opus input rate (v0.7.0 인하) = \$5.0/MTok → \$5.0000 (NOT \$0.0000)
+    assert "$5.0000" in child_line, f"expected parent rate fallback in: {child_line!r}"
+
+
+def test_detail_formatter_renders_with_5m_1h_fields():
+    """detail_formatter가 신규 5m/1h 필드를 합산해 cache 칼럼에 표시.
+    Phase B에서 cache_creation_tokens 필드 제거 후 AttributeError 회귀 가드."""
+    summary = Summary(
+        total_cost=1.0, total_input_tokens=1000, total_output_tokens=100,
+        cache_hit_rate=0.5, total_elapsed=2.0,
+        turns=[TurnUsage(
+            model="claude-opus-4-7", input_tokens=10, output_tokens=20,
+            cache_creation_5m_tokens=300, cache_creation_1h_tokens=200,
+            cache_read_tokens=50, message_id="m1",
+        )],
+    )
+    text = format_detail(summary, "ko")
+    # cache 칼럼이 합산 500을 표시 (5m 300 + 1h 200)
+    assert "500" in text
 
 
 def test_detail_legend_present_when_sub_model_is_unknown_alias():
