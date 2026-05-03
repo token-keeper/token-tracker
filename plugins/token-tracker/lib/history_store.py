@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+from lib import paths
+
+
+SCHEMA_VERSION = 1
+SUPPORTED_SCHEMA_VERSIONS = (1,)
+
+
+def _history_path(session_id: str) -> Path:
+    d = paths.state_dir() / session_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "history.jsonl"
+
+
+def _build_envelope(
+    *,
+    prompt_id: str,
+    session_id: str,
+    user_prompt_text: str,
+    started_at: float,
+    ended_at: float,
+    summary_dict: dict,
+    models_used: list[str],
+    has_subagent_other_model: bool,
+    transcript_entries: list[dict],
+) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "prompt_id": prompt_id,
+        "session_id": session_id,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "user_prompt": {"text": user_prompt_text, "ts": started_at},
+        "summary": summary_dict,
+        "models_used": list(models_used),
+        "has_subagent_other_model": bool(has_subagent_other_model),
+        "transcript_entries": list(transcript_entries),
+    }
+
+
+def _atomic_write_lines(path: Path, lines: list[str]) -> None:
+    """Write all lines atomically via tmp+replace."""
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".jsonl", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(line)
+                if not line.endswith("\n"):
+                    f.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def append_or_update_history(
+    *,
+    session_id: str,
+    prompt_id: str,
+    user_prompt_text: str,
+    started_at: float,
+    ended_at: float,
+    summary_dict: dict,
+    models_used: list[str],
+    has_subagent_other_model: bool,
+    transcript_entries: list[dict],
+) -> None:
+    """Append a new entry (Task 3 will add in-place rewrite for same prompt_id)."""
+    path = _history_path(session_id)
+    envelope = _build_envelope(
+        prompt_id=prompt_id, session_id=session_id,
+        user_prompt_text=user_prompt_text, started_at=started_at,
+        ended_at=ended_at, summary_dict=summary_dict,
+        models_used=models_used,
+        has_subagent_other_model=has_subagent_other_model,
+        transcript_entries=transcript_entries,
+    )
+    new_line = json.dumps(envelope, ensure_ascii=False)
+    existing: list[str] = []
+    if path.exists():
+        try:
+            existing = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            existing = []
+    _atomic_write_lines(path, existing + [new_line])
+
+
+def load_session_history(session_id: str) -> list[dict]:
+    """Load entries for a single session. Skips corrupted/unsupported lines."""
+    path = paths.state_dir() / session_id / "history.jsonl"
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            print(f"[history_store] skip corrupted line in {path}", file=sys.stderr)
+            continue
+        if data.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
+            print(f"[history_store] unsupported schema_version={data.get('schema_version')} in {path}", file=sys.stderr)
+            continue
+        out.append(data)
+    return out
