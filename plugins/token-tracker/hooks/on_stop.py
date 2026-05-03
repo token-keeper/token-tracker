@@ -88,6 +88,13 @@ def main() -> int:
         offset = int(state.get("offset", 0))
         started_at = float(state.get("started_at", time.time()))
 
+        # offset 갱신 정책 (v0.6.4): on_stop은 offset을 절대 갱신하지 않는다.
+        # offset의 유일한 갱신점은 on_user_prompt.py — 한 사용자 입력에 대한
+        # last_summary가 메인의 모든 응답 turn + 모든 sub 결과를 누적해야 하기
+        # 때문이다 (한 입력 = 한 누적 출력). 매 Stop은 user_prompt 시점부터의
+        # entries를 반복 read하지만 dedupe(_dedupe_by_message_id)로 turn/sub
+        # 중복은 발생하지 않는다. save_state 호출을 추가하지 말 것.
+
         # Claude Code sometimes fires Stop before the assistant line — or its
         # subagent tool_result line — has been flushed to the JSONL. Poll up to
         # 500ms (5×100ms) until BOTH conditions are satisfied:
