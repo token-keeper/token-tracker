@@ -2172,6 +2172,7 @@ def test_on_stop_appends_history_when_prompt_id_present(tmp_path, monkeypatch):
     """A complete flow: on_user_prompt → on_stop → history.jsonl has 1 row."""
     from lib import paths
     monkeypatch.setattr(paths, "state_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr(paths, "log_dir", lambda: tmp_path / "log")
 
     # Transcript starts empty — on_user_prompt records offset=0.
     # Then we append the assistant turn (simulating Claude's response).
@@ -2222,6 +2223,7 @@ def test_on_stop_skips_history_when_no_prompt_id(tmp_path, monkeypatch):
     """If prompt_id is missing in state (e.g., hook never ran), skip history."""
     from lib import paths
     monkeypatch.setattr(paths, "state_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr(paths, "log_dir", lambda: tmp_path / "log")
     from lib.state import save_state
     save_state("s_skip", {"offset": 0, "started_at": 1.0})  # no prompt_id
 
@@ -2253,6 +2255,7 @@ def test_on_stop_history_failure_does_not_break_last_summary(tmp_path, monkeypat
     """history_store throwing must not break last_summary save."""
     from lib import paths
     monkeypatch.setattr(paths, "state_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr(paths, "log_dir", lambda: tmp_path / "log")
     from lib.state import save_state
     save_state("s_fail", {"offset": 0, "started_at": 1.0,
                            "prompt_id": "p_x", "prompt_text": "x"})

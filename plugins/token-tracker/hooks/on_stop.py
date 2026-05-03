@@ -171,7 +171,8 @@ def main() -> int:
             # as last_summary (only when turns exist). Failure here must NOT
             # break the existing emit / async early-return flow.
             try:
-                pid = state.get("prompt_id") if isinstance(state, dict) else None
+                # state is normalized to {} above (line 87) so dict-access is safe.
+                pid = state.get("prompt_id")
                 if pid:
                     from lib.history_store import append_or_update_history
                     from lib.parser import parse_transcript_for_history
@@ -192,7 +193,7 @@ def main() -> int:
                     append_or_update_history(
                         session_id=session_id,
                         prompt_id=pid,
-                        user_prompt_text=state.get("prompt_text", "") if isinstance(state, dict) else "",
+                        user_prompt_text=state.get("prompt_text", ""),
                         started_at=started_at,
                         ended_at=time.time(),
                         summary_dict=asdict(summary),

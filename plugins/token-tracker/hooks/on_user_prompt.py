@@ -90,7 +90,8 @@ def main() -> int:
         # spec §4.4.1: real user prompt에만 prompt_id 발급. synthetic은 위에서
         # early return되므로 여기 도달하지 않음. 결과적으로 synthetic event 후
         # 발생하는 Stop은 직전 real prompt의 prompt_id로 누적된다 (의도된 동작).
-        prompt_text = hook_input.get("prompt") if isinstance(hook_input.get("prompt"), str) else ""
+        raw_prompt = hook_input.get("prompt")
+        prompt_text = raw_prompt if isinstance(raw_prompt, str) else ""
         save_state(
             session_id,
             {
