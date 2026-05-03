@@ -2406,6 +2406,27 @@ CLAUDE.md 룰: PR 머지/push는 사용자 명시 승인 후. plan은 여기서 
 
 ## 메모 (Task 0/11 결과 기록용)
 
-(Task 0 진단 결과)
+### Task 0 진단 결과
+
+**Step 0.1: User entry payload shape**
+- ✅ Confirmed: user entry uses `message.content` as **string** (e.g. `"/usage"`)
+- No list-of-blocks format detected in sampled real transcripts
+- Assumption valid: parse_user_prompt_text will handle string content
+
+**Step 0.2: Thinking block presence**
+- ✅ Found: thinking blocks present in assistant.message.content[]
+- Structure: `{"type":"thinking", "thinking":"<text>", "signature":"<base64>"}`
+- May have empty `thinking` field (as observed)
+- Assumption valid: parse_thinking will parse and extract when present
+
+**Step 0.3: on_user_prompt.py hook signature**
+- ✅ Confirmed: `on_user_prompt.py:83` reads `hook_input.get("prompt")` as string
+- Type check at line 65: `if not isinstance(prompt, str): return False`
+- Conservative behavior: non-string prompt treated as real user input
+- Assumption valid: prompt field is always string in UserPromptSubmit payload
+
+**Conclusion**: All 3 spec assumptions verified in real environment.
+- No Task adjustments needed
+- Ready to proceed with Task 1 (parse_user_prompt_text)
 
 (Task 11 사용자 검증 결과)
