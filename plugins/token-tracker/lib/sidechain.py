@@ -200,26 +200,15 @@ def count_active_async_agents(entries: list[dict]) -> int:
     return len(launched_ids - completed_ids)
 
 
-def count_active_async_agents_from_file(transcript_path: str) -> int:
-    """`count_active_async_agents`의 file-based 변형.
-
-    `_read_tail`이 offset 뒤만 보던 한계 때문에 dispatch가 이전 turn에 있고
-    Stop이 다음 turn에 발화하면 launches 0개로 잘못 계산됨 → 활성 sub
-    감지 실패. 이 함수는 jsonl 전체를 읽으므로 dispatch 위치와 Stop 위치가
-    분리된 상황에서도 정확.
-    """
-    if not transcript_path:
-        return 0
+def _scan_completed_task_notifications(transcript_path: str) -> set[str]:
+    """메인 jsonl을 한 번 read하면서 task-notification status=completed인 task-id 집합 반환."""
+    completed_ids: set[str] = set()
     try:
         path = Path(transcript_path)
     except (TypeError, ValueError):
-        return 0
+        return completed_ids
     if not path.is_file():
-        return 0
-
-    launches = extract_async_launches_from_file(transcript_path)
-    launched_ids = set(launches.keys())
-    completed_ids: set[str] = set()
+        return completed_ids
     try:
         with path.open("r", encoding="utf-8") as f:
             for raw in f:
@@ -233,8 +222,85 @@ def count_active_async_agents_from_file(transcript_path: str) -> int:
                 for aid in _completed_agent_ids(entry):
                     completed_ids.add(aid)
     except OSError:
+        return completed_ids
+    return completed_ids
+
+
+def _sidechain_has_assistant(sidechain_dir: Path, agent_id: str) -> bool:
+    """sidechain_dir/agent-{agent_id}.jsonl 안에 assistant 라인이 1개 이상 있는지.
+
+    경로 traversal·symlink 가드는 `collect_sidechain_subagents`와 동일 패턴을
+    사용한다. 파일이 없거나 가드 위반이면 False (즉 미완료로 간주).
+    """
+    if not _is_safe_agent_id(agent_id):
+        return False
+    if not isinstance(sidechain_dir, Path):
+        sidechain_dir = Path(sidechain_dir)
+    path = sidechain_dir / f"agent-{agent_id}.jsonl"
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        if not path.resolve().is_relative_to(sidechain_dir.resolve()):
+            return False
+    except (OSError, ValueError):
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(d, dict) and d.get("type") == "assistant":
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def count_active_async_agents_from_file(transcript_path: str) -> int:
+    """`count_active_async_agents`의 file-based 변형.
+
+    완료 판별은 두 신호를 OR한다:
+      1) 메인 jsonl에 `<task-notification><status>completed</status>...<task-id>{aid}</task-id>`
+         가 존재
+      2) sidechain dir에 `agent-{aid}.jsonl` 파일이 있고 그 안에 assistant 라인이
+         1개 이상 (= sub가 응답을 만들었음 = 끝남)
+
+    이렇게 한 이유: T15 file-based 전환 후에도 일부 sub의 task-notification이
+    메인 jsonl에 매칭이 안 되는 회귀가 발견됐다 (`/rename`, 세션 전환 등으로
+    notification이 다른 jsonl에 들어가는 케이스). sidechain jsonl 파일은 그래도
+    정상 보존되므로 이 신호를 추가해 active로 영원히 남는 false-positive를 제거.
+
+    `_read_tail` offset 한계는 `extract_async_launches_from_file`로 이미 해결됨.
+    """
+    if not transcript_path:
         return 0
-    return len(launched_ids - completed_ids)
+    try:
+        path = Path(transcript_path)
+    except (TypeError, ValueError):
+        return 0
+    if not path.is_file():
+        return 0
+
+    launches = extract_async_launches_from_file(transcript_path)
+    if not launches:
+        return 0
+
+    completed_via_notification = _scan_completed_task_notifications(transcript_path)
+    sidechain_dir = find_sidechain_dir(transcript_path)
+
+    active = 0
+    for agent_id in launches.keys():
+        if agent_id in completed_via_notification:
+            continue
+        if sidechain_dir is not None and _sidechain_has_assistant(sidechain_dir, agent_id):
+            continue
+        active += 1
+    return active
 
 
 def collect_sidechain_subagents(
