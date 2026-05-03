@@ -73,6 +73,63 @@ def extract_async_launches(
     return out
 
 
+def extract_async_launches_from_file(
+    transcript_path: str,
+) -> dict[str, tuple[str, str, str]]:
+    """메인 jsonl 전체를 한 줄씩 stream parse 해서 async launches 매핑을 반환.
+
+    `extract_async_launches`(entries 리스트 in-memory 버전)는 caller가 넘긴
+    엔트리 리스트만 본다. Stop hook의 `_read_tail(transcript_path, offset)`은
+    `offset` 뒤만 읽으므로, dispatch가 이전 turn에서 일어나고 다음 turn에 Stop
+    이 발화하면 dispatch 라인을 못 본다 → launches 누락 → sub 매칭 실패.
+
+    이 함수는 offset을 무시하고 jsonl을 처음부터 끝까지 읽는다. 한 줄씩 stream
+    parse 하므로 메모리 효율은 라인 1개 분.
+
+    빈 경로/없는 파일/읽기 실패는 silent로 빈 dict 반환.
+    invalid JSON 라인은 skip하고 진행.
+    """
+    if not transcript_path:
+        return {}
+    try:
+        path = Path(transcript_path)
+    except (TypeError, ValueError):
+        return {}
+    if not path.is_file():
+        return {}
+
+    # tool_use_id → (agent_type, model)
+    info_by_tu_id: dict[str, tuple[str, str]] = {}
+    # agent_id → (tool_use_id, agent_type, model)
+    out: dict[str, tuple[str, str, str]] = {}
+    # async_launched 라인이 assistant 라인보다 먼저 오는 경우는 없지만, 방어적으로
+    # 두 번 순회하지 않고 한 번에 처리한다 — async_launched 도달 시 lookup이
+    # 이미 채워져 있는 표준 순서를 가정. 이는 기존 in-memory 변형과 동일한
+    # 가정이며, 실제 jsonl 순서가 보장하므로 안전.
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                # 1) assistant Agent tool_use → lookup 채움
+                for tu_id, sa_type, model in parse_agent_tool_uses(entry):
+                    info_by_tu_id[tu_id] = (sa_type, model)
+                # 2) user async_launched → out에 매핑 추가
+                pair = parse_async_launch(entry)
+                if pair is not None:
+                    tool_use_id, agent_id = pair
+                    agent_type, model = info_by_tu_id.get(tool_use_id, ("", ""))
+                    out[agent_id] = (tool_use_id, agent_type, model)
+    except OSError:
+        return {}
+    return out
+
+
 # task-notification XML matcher: extract task-id only when status is completed.
 # Tolerates whitespace and arbitrary order of <task-id>/<status>.
 _COMPLETED_TASK_RE = re.compile(
@@ -140,6 +197,43 @@ def count_active_async_agents(entries: list[dict]) -> int:
     for e in entries:
         for aid in _completed_agent_ids(e):
             completed_ids.add(aid)
+    return len(launched_ids - completed_ids)
+
+
+def count_active_async_agents_from_file(transcript_path: str) -> int:
+    """`count_active_async_agents`의 file-based 변형.
+
+    `_read_tail`이 offset 뒤만 보던 한계 때문에 dispatch가 이전 turn에 있고
+    Stop이 다음 turn에 발화하면 launches 0개로 잘못 계산됨 → 활성 sub
+    감지 실패. 이 함수는 jsonl 전체를 읽으므로 dispatch 위치와 Stop 위치가
+    분리된 상황에서도 정확.
+    """
+    if not transcript_path:
+        return 0
+    try:
+        path = Path(transcript_path)
+    except (TypeError, ValueError):
+        return 0
+    if not path.is_file():
+        return 0
+
+    launches = extract_async_launches_from_file(transcript_path)
+    launched_ids = set(launches.keys())
+    completed_ids: set[str] = set()
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                for aid in _completed_agent_ids(entry):
+                    completed_ids.add(aid)
+    except OSError:
+        return 0
     return len(launched_ids - completed_ids)
 
 

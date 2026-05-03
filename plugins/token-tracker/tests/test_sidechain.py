@@ -546,6 +546,242 @@ def test_count_active_async_agents_ignores_non_completed_status():
     assert sidechain.count_active_async_agents(entries) == 1
 
 
+# ---------------------------------------------------------------------------
+# extract_async_launches_from_file (Bug A — file-based 전체 jsonl 스캔)
+# ---------------------------------------------------------------------------
+
+
+def _write_jsonl(path: Path, entries: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+
+
+def test_extract_async_launches_from_file_reads_full_jsonl(tmp_path):
+    """jsonl 파일을 처음부터 끝까지 읽어 launches를 추출한다.
+
+    회귀 시나리오: dispatch 직후가 아닌 다음 turn에서 Stop hook이 발화하면
+    `_read_tail(transcript_path, offset)`이 dispatch 라인 뒤만 read해서
+    `extract_async_launches`가 launches를 잡지 못한다. file-based 변형은 offset
+    무시하고 전체를 읽으므로 장면이 분리돼도 launches를 정상 매핑.
+    """
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(transcript, [
+        # turn 1: dispatch (assistant tool_use + async_launched)
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_a",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_async_1",
+                        "name": "Agent",
+                        "input": {"subagent_type": "claude-code-guide"},
+                    },
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_async_1", "content": "launched"}
+                ],
+            },
+            "toolUseResult": {
+                "agentType": "claude-code-guide",
+                "agentId": "agent-aaa-1",
+                "status": "async_launched",
+            },
+        },
+        # turn 2: 다른 user prompt + 다른 assistant 응답 (dispatch 와 무관)
+        {"type": "user", "message": {"role": "user", "content": "next prompt"}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_b",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {
+                    "input_tokens": 1, "output_tokens": 1,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        },
+    ])
+
+    result = sidechain.extract_async_launches_from_file(str(transcript))
+    assert result == {
+        "agent-aaa-1": ("toolu_async_1", "claude-code-guide", ""),
+    }
+
+
+def test_extract_async_launches_from_file_returns_empty_when_no_launches(tmp_path):
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(transcript, [
+        {"type": "user", "message": {"role": "user", "content": "hi"}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_x",
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {
+                    "input_tokens": 1, "output_tokens": 1,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        },
+    ])
+    assert sidechain.extract_async_launches_from_file(str(transcript)) == {}
+
+
+def test_extract_async_launches_from_file_returns_empty_when_path_missing(tmp_path):
+    """파일이 없거나 빈 경로면 빈 dict (예외 없이 graceful)."""
+    assert sidechain.extract_async_launches_from_file("") == {}
+    assert sidechain.extract_async_launches_from_file(str(tmp_path / "no-such.jsonl")) == {}
+
+
+def test_extract_async_launches_from_file_skips_corrupt_lines(tmp_path):
+    """invalid JSON 라인은 skip하고 진행."""
+    transcript = tmp_path / "session.jsonl"
+    with transcript.open("w", encoding="utf-8") as f:
+        f.write('{not valid json\n')
+        f.write(json.dumps({
+            "type": "assistant",
+            "message": {
+                "id": "msg_a",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_async_1",
+                        "name": "Agent",
+                        "input": {"subagent_type": "general-purpose"},
+                    },
+                ],
+            },
+        }) + "\n")
+        f.write('\n')  # blank
+        f.write(json.dumps({
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_async_1", "content": "launched"}
+                ],
+            },
+            "toolUseResult": {
+                "agentType": "general-purpose",
+                "agentId": "agent-bbb",
+                "status": "async_launched",
+            },
+        }) + "\n")
+        f.write('{"also":"broken"\n')
+
+    result = sidechain.extract_async_launches_from_file(str(transcript))
+    assert result == {"agent-bbb": ("toolu_async_1", "general-purpose", "")}
+
+
+# ---------------------------------------------------------------------------
+# count_active_async_agents_from_file (Bug A — file-based 변형)
+# ---------------------------------------------------------------------------
+
+
+def test_count_active_async_agents_from_file_reads_full_jsonl(tmp_path):
+    """dispatch가 jsonl 앞부분에 있고 그 뒤에 다른 turn이 추가돼도 active 카운트가 정확.
+
+    `count_active_async_agents(entries)`는 _read_tail offset 뒤만 보므로
+    이전 turn의 dispatch를 못 본다. file-based 변형은 전체 jsonl 읽음.
+    """
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(transcript, [
+        # turn 1: dispatch agent-aaa
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_a",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }],
+            },
+        },
+        {
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "launched"}
+            ]},
+            "toolUseResult": {
+                "agentType": "general-purpose",
+                "agentId": "agent-aaa",
+                "status": "async_launched",
+            },
+        },
+        # turn 2: 다른 prompt + 응답 (dispatch 없음)
+        {"type": "user", "message": {"role": "user", "content": "another"}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_b",
+                "content": [{"type": "text", "text": "ack"}],
+                "usage": {
+                    "input_tokens": 1, "output_tokens": 1,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        },
+    ])
+    # agent-aaa 미완 → active=1
+    assert sidechain.count_active_async_agents_from_file(str(transcript)) == 1
+
+
+def test_count_active_async_agents_from_file_subtracts_completions(tmp_path):
+    transcript = tmp_path / "session.jsonl"
+    _write_jsonl(transcript, [
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_a",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "Agent",
+                    "input": {"subagent_type": "general-purpose"},
+                }],
+            },
+        },
+        {
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "launched"}
+            ]},
+            "toolUseResult": {
+                "agentType": "general-purpose",
+                "agentId": "agent-aaa",
+                "status": "async_launched",
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": (
+                    "<task-notification>"
+                    "<task-id>agent-aaa</task-id>"
+                    "<status>completed</status>"
+                    "</task-notification>"
+                ),
+            },
+        },
+    ])
+    assert sidechain.count_active_async_agents_from_file(str(transcript)) == 0
+
+
+def test_count_active_async_agents_from_file_returns_zero_when_path_missing(tmp_path):
+    assert sidechain.count_active_async_agents_from_file("") == 0
+    assert sidechain.count_active_async_agents_from_file(str(tmp_path / "no.jsonl")) == 0
+
+
 def test_collect_sidechain_subagents_handles_corrupt_lines(tmp_path):
     sub_dir = tmp_path / "sess" / "subagents"
     sub_dir.mkdir(parents=True)
