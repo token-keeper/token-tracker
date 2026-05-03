@@ -134,3 +134,15 @@ def load_session_history(session_id: str) -> list[dict]:
             continue
         out.append(data)
     return out
+
+
+def load_all_sessions_history() -> list[dict]:
+    """Glob `state/*/history.jsonl` and merge all entries into one list.
+    Each entry already carries `session_id`. Order: file glob order then
+    line order within each file. Caller can sort by started_at if needed."""
+    root = paths.state_dir()
+    out: list[dict] = []
+    for hist in sorted(root.glob("*/history.jsonl")):
+        sess = hist.parent.name
+        out.extend(load_session_history(sess))
+    return out

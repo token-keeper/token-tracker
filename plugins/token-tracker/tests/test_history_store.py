@@ -134,3 +134,38 @@ def test_different_prompt_id_appends_new_line(tmp_path, monkeypatch):
     append_or_update_history(**{**common, "prompt_id": "p_2"})
     out = load_session_history("s")
     assert [e["prompt_id"] for e in out] == ["p_1", "p_2"]
+
+
+def test_load_all_sessions_aggregates(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from lib.history_store import append_or_update_history, load_all_sessions_history
+
+    for sess in ("alpha", "beta", "gamma"):
+        append_or_update_history(
+            session_id=sess, prompt_id=f"p_{sess}", user_prompt_text=sess,
+            started_at=1.0, ended_at=2.0, summary_dict=_build_summary_dict(),
+            models_used=[], has_subagent_other_model=False, transcript_entries=[],
+        )
+
+    out = load_all_sessions_history()
+    assert len(out) == 3
+    assert {e["session_id"] for e in out} == {"alpha", "beta", "gamma"}
+
+
+def test_load_all_sessions_skips_session_without_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    from lib import paths
+    from lib.history_store import append_or_update_history, load_all_sessions_history
+
+    # 1 session with history
+    append_or_update_history(
+        session_id="has_history", prompt_id="p", user_prompt_text="",
+        started_at=1.0, ended_at=2.0, summary_dict=_build_summary_dict(),
+        models_used=[], has_subagent_other_model=False, transcript_entries=[],
+    )
+    # 1 session with only last_summary, no history.jsonl
+    (paths.state_dir() / "no_history").mkdir(parents=True, exist_ok=True)
+    (paths.state_dir() / "no_history" / "last_summary.json").write_text("{}")
+
+    out = load_all_sessions_history()
+    assert {e["session_id"] for e in out} == {"has_history"}
