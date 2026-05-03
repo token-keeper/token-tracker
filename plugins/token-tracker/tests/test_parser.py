@@ -578,6 +578,30 @@ def test_parse_line_falls_back_to_legacy_when_no_cache_creation_obj():
     assert t.cache_creation_1h_tokens == 0
 
 
+def test_parse_sidechain_assistant_extracts_5m_1h():
+    from lib.parser import parse_sidechain_assistant
+    entry = {
+        "type": "assistant",
+        "message": {
+            "model": "claude-haiku-4-5",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 10,
+                "cache_read_input_tokens": 20,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 100,
+                    "ephemeral_1h_input_tokens": 200,
+                },
+            },
+        },
+    }
+    s = parse_sidechain_assistant(entry, "general-purpose", "tu_1")
+    assert s is not None
+    assert s.cache_creation_5m_tokens == 100
+    assert s.cache_creation_1h_tokens == 200
+    assert s.model == "claude-haiku-4-5"
+
+
 def test_parse_tool_result_for_agent_extracts_5m_1h():
     from lib.parser import parse_tool_result_for_agent
     entry = {
