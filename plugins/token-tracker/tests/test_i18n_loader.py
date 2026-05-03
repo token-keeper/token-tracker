@@ -30,6 +30,45 @@ def test_all_expected_keys_present_both_languages():
         "verbose_status", "verbose_changed", "verbose_no_change",
         "verbose_usage", "verbose_error", "verbose_error_io",
         "subagent_row_prefix", "subagent_legend",
+        "html_title", "html_generated_at", "html_version_label",
+        "tab_current", "tab_all",
+        "col_history_index", "col_history_time", "col_history_prompt",
+        "col_history_model", "col_history_cost", "col_history_in",
+        "col_history_out", "col_history_cc", "col_history_elapsed",
+        "col_history_session",
+        "search_placeholder", "filter_model_all", "filter_session_all",
+        "expand_user_prompt", "expand_ai_response", "expand_thinking",
+        "expand_tool_calls", "expand_show_full", "expand_collapse",
+        "total_label", "no_data_message",
+        "opened_url",
     }
     assert set(load_strings("ko").keys()) == expected_keys
     assert set(load_strings("en").keys()) == expected_keys
+
+
+def test_ko_has_history_keys():
+    s = load_strings("ko")
+    for key in [
+        "html_title", "html_generated_at", "html_version_label",
+        "tab_current", "tab_all",
+        "col_history_index", "col_history_time", "col_history_prompt",
+        "col_history_model", "col_history_cost", "col_history_in",
+        "col_history_out", "col_history_cc", "col_history_elapsed",
+        "col_history_session",
+        "search_placeholder", "filter_model_all", "filter_session_all",
+        "expand_user_prompt", "expand_ai_response", "expand_thinking",
+        "expand_tool_calls", "expand_show_full", "expand_collapse",
+        "total_label", "no_data_message",
+        "opened_url",
+    ]:
+        assert key in s, f"missing ko key: {key}"
+
+
+def test_en_has_history_keys():
+    s = load_strings("en")
+    for key in [
+        "html_title", "tab_current", "tab_all",
+        "col_history_prompt", "search_placeholder", "no_data_message",
+        "opened_url",
+    ]:
+        assert key in s
