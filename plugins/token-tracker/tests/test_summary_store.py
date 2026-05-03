@@ -11,7 +11,8 @@ def _sample_summary() -> Summary:
         TurnUsage(
             model="claude-opus-4-7",
             input_tokens=10, output_tokens=20,
-            cache_creation_tokens=0, cache_read_tokens=5,
+            cache_creation_5m_tokens=0, cache_creation_1h_tokens=0,
+            cache_read_tokens=5,
             tools_used=[{"name": "Read", "count": 2}],
             timestamp_iso="2026-04-23T10:00:00Z",
             message_id="m1",
@@ -84,17 +85,18 @@ def test_save_is_atomic_no_temp_leftover(monkeypatch, tmp_path):
     assert temps == []
 
 
-def test_save_writes_schema_version_2(monkeypatch, tmp_path):
+def test_save_writes_schema_version_3(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    summary_store.save_last_summary("sess-v2", _sample_summary())
-    target = paths.state_dir() / "sess-v2" / "last_summary.json"
+    summary_store.save_last_summary("sess-v3", _sample_summary())
+    target = paths.state_dir() / "sess-v3" / "last_summary.json"
     data = json.loads(target.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
 
 
-def test_load_v1_normalizes_subagents_to_empty_list(monkeypatch, tmp_path):
-    """A schema_version=1 file (no `subagents` field on turns) loads cleanly,
-    and every TurnUsage gets a default empty subagents list."""
+def test_load_v1_drops_to_none_after_v3_bump(monkeypatch, tmp_path):
+    """v0.7.0에서 SCHEMA_VERSION이 v3로 bump된 뒤 옛 v1 파일은 None 반환.
+    (이전엔 v1을 normalize해 subagents=[]로 채웠으나, 5m/1h 분리 이후
+    의미 보존이 불가능해 의도적으로 drop함)."""
     monkeypatch.setenv("HOME", str(tmp_path))
     d = paths.state_dir() / "sess-v1"
     d.mkdir(parents=True, exist_ok=True)
@@ -120,11 +122,7 @@ def test_load_v1_normalizes_subagents_to_empty_list(monkeypatch, tmp_path):
     }
     (d / "last_summary.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    loaded = summary_store.load_last_summary("sess-v1")
-    assert loaded is not None
-    assert len(loaded.turns) == 1
-    assert loaded.turns[0].subagents == []
-    assert loaded.turns[0].agent_tool_use_ids == []
+    assert summary_store.load_last_summary("sess-v1") is None
 
 
 def _sub(tool_use_id: str = "toolu_a", **overrides) -> SubagentUsage:
@@ -133,7 +131,8 @@ def _sub(tool_use_id: str = "toolu_a", **overrides) -> SubagentUsage:
         tool_use_id=tool_use_id,
         input_tokens=100,
         output_tokens=50,
-        cache_creation_tokens=10,
+        cache_creation_5m_tokens=10,
+        cache_creation_1h_tokens=0,
         cache_read_tokens=20,
         total_duration_ms=1234,
     )
@@ -141,14 +140,15 @@ def _sub(tool_use_id: str = "toolu_a", **overrides) -> SubagentUsage:
     return SubagentUsage(**base)
 
 
-def test_load_v2_round_trips_subagents(monkeypatch, tmp_path):
+def test_load_v3_round_trips_subagents(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     sub = _sub()
     turns = [
         TurnUsage(
             model="claude-opus-4-7",
             input_tokens=10, output_tokens=20,
-            cache_creation_tokens=0, cache_read_tokens=5,
+            cache_creation_5m_tokens=0, cache_creation_1h_tokens=0,
+            cache_read_tokens=5,
             tools_used=[{"name": "Agent", "count": 1}],
             timestamp_iso="2026-04-23T10:00:00Z",
             message_id="m1", index=0,
@@ -161,8 +161,8 @@ def test_load_v2_round_trips_subagents(monkeypatch, tmp_path):
         total_output_tokens=70, cache_hit_rate=0.18,
         total_elapsed=2.0, turns=turns,
     )
-    summary_store.save_last_summary("sess-v2-rt", summary)
-    loaded = summary_store.load_last_summary("sess-v2-rt")
+    summary_store.save_last_summary("sess-v3-rt", summary)
+    loaded = summary_store.load_last_summary("sess-v3-rt")
     assert loaded is not None
     assert len(loaded.turns) == 1
     subs = loaded.turns[0].subagents
@@ -172,12 +172,13 @@ def test_load_v2_round_trips_subagents(monkeypatch, tmp_path):
     assert subs[0].tool_use_id == "toolu_a"
     assert subs[0].input_tokens == 100
     assert subs[0].output_tokens == 50
-    assert subs[0].cache_creation_tokens == 10
+    assert subs[0].cache_creation_5m_tokens == 10
+    assert subs[0].cache_creation_1h_tokens == 0
     assert subs[0].cache_read_tokens == 20
     assert subs[0].total_duration_ms == 1234
 
 
-def test_load_v2_round_trips_sub_model(monkeypatch, tmp_path):
+def test_load_v3_round_trips_sub_model(monkeypatch, tmp_path):
     """sub.model이 채워진 채로 save → load 시 그대로 복원되어야 한다."""
     monkeypatch.setenv("HOME", str(tmp_path))
     sub = _sub()
@@ -186,7 +187,8 @@ def test_load_v2_round_trips_sub_model(monkeypatch, tmp_path):
         TurnUsage(
             model="claude-opus-4-7",
             input_tokens=10, output_tokens=20,
-            cache_creation_tokens=0, cache_read_tokens=5,
+            cache_creation_5m_tokens=0, cache_creation_1h_tokens=0,
+            cache_read_tokens=5,
             tools_used=[{"name": "Agent", "count": 1}],
             timestamp_iso="2026-04-23T10:00:00Z",
             message_id="m1", index=0,
@@ -199,20 +201,20 @@ def test_load_v2_round_trips_sub_model(monkeypatch, tmp_path):
         total_output_tokens=70, cache_hit_rate=0.18,
         total_elapsed=2.0, turns=turns,
     )
-    summary_store.save_last_summary("sess-v2-submodel", summary)
-    loaded = summary_store.load_last_summary("sess-v2-submodel")
+    summary_store.save_last_summary("sess-v3-submodel", summary)
+    loaded = summary_store.load_last_summary("sess-v3-submodel")
     assert loaded is not None
     assert loaded.turns[0].subagents[0].model == "claude-haiku-4-5"
 
 
-def test_load_v2_sub_without_model_defaults_to_empty(monkeypatch, tmp_path):
-    """예전 v2 파일(`model` 없는 sub)도 빈 문자열로 normalize."""
+def test_load_v3_sub_without_model_defaults_to_empty(monkeypatch, tmp_path):
+    """v3 파일에서 `model` 필드가 빠진 sub은 빈 문자열로 normalize."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    d = paths.state_dir() / "sess-v2-old-sub"
+    d = paths.state_dir() / "sess-v3-old-sub"
     d.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema_version": 2,
-        "session_id": "sess-v2-old-sub",
+        "schema_version": 3,
+        "session_id": "sess-v3-old-sub",
         "saved_at": 1745301234.5,
         "summary": {
             "total_cost": 0.001, "total_input_tokens": 15,
@@ -221,7 +223,8 @@ def test_load_v2_sub_without_model_defaults_to_empty(monkeypatch, tmp_path):
             "turns": [{
                 "model": "claude-opus-4-7",
                 "input_tokens": 10, "output_tokens": 20,
-                "cache_creation_tokens": 0, "cache_read_tokens": 5,
+                "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                "cache_read_tokens": 5,
                 "tools_used": [], "timestamp_iso": "2026-04-23T10:00:00Z",
                 "message_id": "m1", "index": 0,
                 "agent_tool_use_ids": ["toolu_a"],
@@ -229,16 +232,17 @@ def test_load_v2_sub_without_model_defaults_to_empty(monkeypatch, tmp_path):
                     "agent_type": "general-purpose",
                     "tool_use_id": "toolu_a",
                     "input_tokens": 1, "output_tokens": 2,
-                    "cache_creation_tokens": 0, "cache_read_tokens": 0,
+                    "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                    "cache_read_tokens": 0,
                     "total_duration_ms": 0,
-                    # `model` field absent — old v2 file
+                    # `model` field absent — sub이 model 없이 저장된 경우
                 }],
             }],
         },
     }
     (d / "last_summary.json").write_text(json.dumps(payload), encoding="utf-8")
 
-    loaded = summary_store.load_last_summary("sess-v2-old-sub")
+    loaded = summary_store.load_last_summary("sess-v3-old-sub")
     assert loaded is not None
     assert loaded.turns[0].subagents[0].model == ""
 
@@ -316,7 +320,7 @@ def test_load_v3_roundtrip(monkeypatch, tmp_path):
     assert loaded.turns[0].cache_creation_1h_tokens == 40
 
 
-def test_load_v2_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
+def test_load_v3_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     sub_a = _sub(tool_use_id="toolu_a", agent_type="agent-a", input_tokens=1)
     sub_b = _sub(tool_use_id="toolu_b", agent_type="agent-b", input_tokens=2)
@@ -324,7 +328,8 @@ def test_load_v2_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
         TurnUsage(
             model="claude-opus-4-7",
             input_tokens=10, output_tokens=20,
-            cache_creation_tokens=0, cache_read_tokens=5,
+            cache_creation_5m_tokens=0, cache_creation_1h_tokens=0,
+            cache_read_tokens=5,
             tools_used=[{"name": "Agent", "count": 2}],
             timestamp_iso="2026-04-23T10:00:00Z",
             message_id="m1", index=0,
@@ -337,8 +342,8 @@ def test_load_v2_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
         total_output_tokens=120, cache_hit_rate=0.2,
         total_elapsed=3.0, turns=turns,
     )
-    summary_store.save_last_summary("sess-v2-multi", summary)
-    loaded = summary_store.load_last_summary("sess-v2-multi")
+    summary_store.save_last_summary("sess-v3-multi", summary)
+    loaded = summary_store.load_last_summary("sess-v3-multi")
     assert loaded is not None
     subs = loaded.turns[0].subagents
     assert len(subs) == 2
