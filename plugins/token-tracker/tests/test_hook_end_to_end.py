@@ -2166,3 +2166,124 @@ def test_e2e_detail_renders_after_v3_save(tmp_path, monkeypatch):
     assert loaded is not None
     text = format_detail(loaded, language="ko")
     assert "500" in text  # 5m 300 + 1h 200
+
+
+def test_on_stop_appends_history_when_prompt_id_present(tmp_path, monkeypatch):
+    """A complete flow: on_user_prompt → on_stop → history.jsonl has 1 row."""
+    from lib import paths
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path / "state")
+
+    # Transcript starts empty — on_user_prompt records offset=0.
+    # Then we append the assistant turn (simulating Claude's response).
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("", encoding="utf-8")  # empty at prompt time
+
+    # Run on_user_prompt first (assigns prompt_id, offset=0)
+    import io, importlib
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "session_id": "s_e2e", "transcript_path": str(transcript),
+        "prompt": "hi",
+    })))
+    import hooks.on_user_prompt as up
+    importlib.reload(up)
+    up.main()
+
+    # Now append the assistant turn (Claude responded after the prompt)
+    with transcript.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-05-03T14:23:00Z",
+            "message": {
+                "id": "msg_1",
+                "model": "claude-opus-4-7",
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {"input_tokens": 10, "output_tokens": 5,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            },
+        }) + "\n")
+
+    # Run on_stop
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "session_id": "s_e2e", "transcript_path": str(transcript),
+    })))
+    import hooks.on_stop as os_hook
+    importlib.reload(os_hook)
+    os_hook.main()
+
+    # Verify
+    from lib.history_store import load_session_history
+    out = load_session_history("s_e2e")
+    assert len(out) == 1
+    assert out[0]["user_prompt"]["text"] == "hi"
+    assert out[0]["models_used"] == ["claude-opus-4-7"]
+
+
+def test_on_stop_skips_history_when_no_prompt_id(tmp_path, monkeypatch):
+    """If prompt_id is missing in state (e.g., hook never ran), skip history."""
+    from lib import paths
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path / "state")
+    from lib.state import save_state
+    save_state("s_skip", {"offset": 0, "started_at": 1.0})  # no prompt_id
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({
+            "type": "assistant", "timestamp": "2026-05-03T14:23:00Z",
+            "message": {"id": "m", "model": "claude-opus-4-7",
+                        "content": [{"type": "text", "text": "x"}],
+                        "usage": {"input_tokens": 1, "output_tokens": 1,
+                                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    import io, importlib
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "session_id": "s_skip", "transcript_path": str(transcript),
+    })))
+    import hooks.on_stop as os_hook
+    importlib.reload(os_hook)
+    os_hook.main()
+
+    from lib.history_store import load_session_history
+    assert load_session_history("s_skip") == []  # skipped
+
+
+def test_on_stop_history_failure_does_not_break_last_summary(tmp_path, monkeypatch):
+    """history_store throwing must not break last_summary save."""
+    from lib import paths
+    monkeypatch.setattr(paths, "state_dir", lambda: tmp_path / "state")
+    from lib.state import save_state
+    save_state("s_fail", {"offset": 0, "started_at": 1.0,
+                           "prompt_id": "p_x", "prompt_text": "x"})
+
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        json.dumps({
+            "type": "assistant", "timestamp": "2026-05-03T14:23:00Z",
+            "message": {"id": "m", "model": "claude-opus-4-7",
+                        "content": [{"type": "text", "text": "x"}],
+                        "usage": {"input_tokens": 1, "output_tokens": 1,
+                                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    # Sabotage history_store
+    import lib.history_store as hs
+    monkeypatch.setattr(hs, "append_or_update_history",
+                        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    import io, importlib
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "session_id": "s_fail", "transcript_path": str(transcript),
+    })))
+    import hooks.on_stop as os_hook
+    importlib.reload(os_hook)
+    rc = os_hook.main()
+    assert rc == 0  # hook still returns OK
+
+    # last_summary still saved
+    from lib.summary_store import load_last_summary
+    summ = load_last_summary("s_fail")
+    assert summ is not None
