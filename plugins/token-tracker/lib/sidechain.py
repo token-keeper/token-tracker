@@ -156,25 +156,53 @@ def _completed_agent_ids_in_text(text: str) -> list[str]:
 def _completed_agent_ids(entry: dict) -> list[str]:
     """엔트리에서 task-notification status=completed의 task-id 집합.
 
-    두 가지 형태 모두 지원:
-      1) type=="user", message.content가 task-notification XML 텍스트
-         (queue-operation으로 흘러온 알림)
-      2) type=="attachment", attachment.type=="queued_command", content가 같은 XML
+    Claude Code는 같은 task-notification XML을 여러 라인 형태로 흘리며,
+    버전·OS·세션 전환에 따라 다른 형태로 나타난다. 회귀로 일부 형태를 놓치면
+    active가 영원히 줄지 않아 token-tracker 출력이 silent로 묶이는 버그가
+    발생한다. 다음 형태들을 모두 cover한다:
+
+      1) type=="queue-operation"  — 최상위 `content`가 XML 텍스트
+         (실측 가장 많음. 메인 jsonl의 권위적 신호)
+      2) type=="user"             — `message.content`가 XML 텍스트 (string)
+      3) type=="user"             — `message.content`가 list of dict
+         (각 block의 `text` 또는 `content` 필드에 XML 텍스트)
+      4) type=="attachment"       — `attachment.type`=="queued_command"이고
+         `attachment.prompt` 또는 `attachment.content`에 XML 텍스트
+
+    `_completed_agent_ids_in_text`가 status=completed인 것만 골라내므로
+    무관한 텍스트(예: tool_result에 XML 일부가 섞여 들어와도 status가
+    completed가 아니면 매칭 0)에는 영향 없음.
     """
     if not isinstance(entry, dict):
         return []
-    # Form 1: queue-operation / user line with XML text content
+    # Form 1: queue-operation line with top-level `content` as XML string
+    if entry.get("type") == "queue-operation":
+        content = entry.get("content")
+        if isinstance(content, str) and "<task-notification" in content:
+            return _completed_agent_ids_in_text(content)
+    # Form 2 & 3: user line with message.content as string or list of blocks
     msg = entry.get("message")
     if isinstance(msg, dict):
         content = msg.get("content")
         if isinstance(content, str) and "<task-notification" in content:
             return _completed_agent_ids_in_text(content)
-    # Form 2: attachment with queued_command
+        if isinstance(content, list):
+            ids: list[str] = []
+            for blk in content:
+                if not isinstance(blk, dict):
+                    continue
+                text = blk.get("text") or blk.get("content")
+                if isinstance(text, str) and "<task-notification" in text:
+                    ids.extend(_completed_agent_ids_in_text(text))
+            if ids:
+                return ids
+    # Form 4: attachment with queued_command (prompt 또는 content)
     attachment = entry.get("attachment")
     if isinstance(attachment, dict) and attachment.get("type") == "queued_command":
-        content = attachment.get("content")
-        if isinstance(content, str) and "<task-notification" in content:
-            return _completed_agent_ids_in_text(content)
+        for field in ("prompt", "content"):
+            value = attachment.get(field)
+            if isinstance(value, str) and "<task-notification" in value:
+                return _completed_agent_ids_in_text(value)
     return []
 
 
