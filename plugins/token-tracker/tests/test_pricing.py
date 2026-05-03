@@ -206,6 +206,29 @@ def test_pricing_1h_more_expensive_than_5m_for_all_models():
         )
 
 
+def test_compute_cost_emits_stderr_for_unknown_model(capsys, monkeypatch):
+    """미등록 model에 대해 stderr 경고가 한 번 나오고 그 후엔 silent."""
+    from lib import pricing
+    from lib.parser import TurnUsage
+    monkeypatch.setattr(pricing, "_warned_unknown_models", set())
+    usage = TurnUsage(
+        model="unknown-future-model-99",
+        input_tokens=1000,
+        output_tokens=500,
+    )
+    cost1 = pricing.compute_cost("unknown-future-model-99", usage)
+    assert cost1 == 0.0
+    captured = capsys.readouterr()
+    assert "unknown pricing model" in captured.err
+    assert "unknown-future-model-99" in captured.err
+
+    # 같은 model 두 번째 호출은 silent
+    cost2 = pricing.compute_cost("unknown-future-model-99", usage)
+    assert cost2 == 0.0
+    captured2 = capsys.readouterr()
+    assert captured2.err == ""
+
+
 def test_compute_cost_combines_5m_and_1h_correctly():
     """5m + 1h 두 단가 정확 합산."""
     from lib.parser import TurnUsage
