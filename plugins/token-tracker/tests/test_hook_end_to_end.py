@@ -1757,3 +1757,314 @@ def test_error_path_emits_diagnostic(tmp_path):
     if r.stdout.strip():
         out = json.loads(r.stdout)
         assert out.get("continue") is True
+
+
+def test_user_prompt_skips_offset_update_for_task_notification(tmp_path):
+    """v0.6.5 회귀 가드: UserPromptSubmit이 task-notification(synthetic prompt)에
+    대해서는 offset을 갱신하지 않아야 한다.
+
+    Claude Code는 background agent 완료 알림을 `type=user, message.content=
+    <task-notification>...</task-notification>` 라인으로 jsonl에 쓰면서
+    UserPromptSubmit hook도 발화시킨다. 만약 hook이 매번 offset을 file_size로
+    덮어쓰면, 다음 Stop의 `_read_tail(offset)` 윈도우는 이전 dispatch turn을
+    놓쳐 sub들이 부모 turn에 attach 안 되고 silent drop된다 (사용자 보고:
+    "sub 0개").
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_text("first user line\n", encoding="utf-8")
+    initial_size = session_path.stat().st_size
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    session_id = "synthetic-prompt"
+    # First: real user prompt records offset = current file_size
+    real_payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "리뷰해",
+    }
+    assert _run("on_user_prompt.py", real_payload, env).returncode == 0
+
+    # File grows (background activity)
+    session_path.write_text("first\nsecond\nthird\n", encoding="utf-8")
+
+    # Synthetic task-notification fires UserPromptSubmit again — must NOT update offset
+    synthetic_payload = dict(real_payload)
+    synthetic_payload["prompt"] = (
+        "<task-notification>\n<task-id>abc123</task-id>\n"
+        "<status>completed</status>\n</task-notification>"
+    )
+    assert _run("on_user_prompt.py", synthetic_payload, env).returncode == 0
+
+    # offset.json should still be at initial_size (NOT bumped by synthetic prompt)
+    offset_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "offset.json"
+    )
+    assert offset_file.is_file()
+    state = json.loads(offset_file.read_text(encoding="utf-8"))
+    assert state["offset"] == initial_size, (
+        f"synthetic task-notification must not bump offset; "
+        f"expected {initial_size}, got {state['offset']}"
+    )
+
+
+def test_user_prompt_updates_offset_for_slash_command_prompt(tmp_path):
+    """v0.6.5: synthetic prompt detection must NOT false-positive on slash commands.
+
+    `<command-name>/foo</command-name>` wrappers, bash invocations, and
+    command stdout are user-driven turns and should keep updating offset.
+    Otherwise normal slash command usage would break the per-prompt
+    accumulation semantics.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    session_path.write_text("seed\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+
+    session_id = "slash-cmd"
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "<command-name>/token-detail</command-name>",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    expected = session_path.stat().st_size
+    offset_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "offset.json"
+    )
+    state = json.loads(offset_file.read_text(encoding="utf-8"))
+    assert state["offset"] == expected, (
+        f"slash command prompt must update offset; expected {expected}, "
+        f"got {state['offset']}"
+    )
+
+
+def test_e2e_sub_visible_when_dispatch_and_result_in_distinct_turns_after_task_notification(tmp_path):
+    """v0.6.5 회귀 가드 (T19): 실측 회귀 재현.
+
+    시나리오 (사용자 보고와 동일):
+      1. 사용자 입력 (UserPromptSubmit, real prompt)
+      2. 메인이 7개 async Agent dispatch (assistant turn 1)
+      3. async_launched user lines 7개
+      4. 메인 응답 turn 2 (간단한 대기 메시지)
+      5. background agent 1개 완료 → task-notification user line +
+         UserPromptSubmit hook 재발화 (synthetic prompt)
+      6. 메인 응답 turn 3
+      7. ... (반복) ...
+      N. 마지막 task-notification 후 메인의 종합 응답 turn
+      N+1. Stop hook 발화
+
+    버그(fix 전): 5의 hook 재발화가 매번 offset을 file_size로 덮어써,
+    Stop의 `_read_tail`이 dispatch turn(1)을 놓쳐 sub 7개 모두 silent drop.
+
+    Fix 후: synthetic prompt는 offset 갱신 skip → dispatch turn 보존 →
+    last_summary.turns[].subagents에 모든 sub이 attach.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_stem = "sess-distinct-turns"
+    session_path = tmp_path / f"{session_stem}.jsonl"
+    sidechain_dir = tmp_path / session_stem / "subagents"
+    sidechain_dir.mkdir(parents=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "0"
+    session_id = "distinct-turns"
+
+    # ---- Step 1: real user prompt arrives ----
+    user_line = {
+        "type": "user",
+        "uuid": "u-1",
+        "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "리뷰해"},
+    }
+    session_path.write_text(json.dumps(user_line) + "\n", encoding="utf-8")
+
+    payload = {
+        "session_id": session_id,
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "리뷰해",
+    }
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+
+    # ---- Step 2: dispatch turn (assistant with 3 Agent tool_uses, same message_id) ----
+    # Claude Code splits the response into 1 line per content block but copies usage.
+    # We simulate 3 dispatch lines (one per Agent block) sharing message_id.
+    agent_ids = ["agent-rv-1", "agent-rv-2", "agent-rv-3"]
+    tool_use_ids = ["toolu_RV1", "toolu_RV2", "toolu_RV3"]
+    dispatch_lines = []
+    for i, tu_id in enumerate(tool_use_ids):
+        dispatch_lines.append({
+            "type": "assistant",
+            "uuid": f"a-disp-{i}",
+            "timestamp": f"2026-04-23T10:00:0{i+1}.000Z",
+            "message": {
+                "id": "msg_dispatch",  # same message_id across blocks
+                "role": "assistant",
+                "model": "claude-opus-4-7",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tu_id,
+                        "name": "Agent",
+                        "input": {"subagent_type": "general-purpose"},
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 50, "output_tokens": 10,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        })
+
+    # ---- Step 3: async_launched lines (one per dispatch) ----
+    launched_lines = []
+    for i, (tu_id, aid) in enumerate(zip(tool_use_ids, agent_ids)):
+        launched_lines.append({
+            "type": "user",
+            "uuid": f"u-launch-{i}",
+            "timestamp": f"2026-04-23T10:00:1{i}.000Z",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": tu_id, "content": "launched"}
+                ],
+            },
+            "toolUseResult": {
+                "agentType": "general-purpose",
+                "agentId": aid,
+                "status": "async_launched",
+            },
+        })
+
+    # ---- Sidechain jsonls (one per agent, with assistant turn) ----
+    sub_in, sub_out = 1000, 200
+    for aid in agent_ids:
+        sf = sidechain_dir / f"agent-{aid}.jsonl"
+        sf.write_text(json.dumps({
+            "type": "assistant",
+            "timestamp": "2026-04-23T10:01:00.000Z",
+            "message": {
+                "id": f"msg_side_{aid}",
+                "role": "assistant",
+                "model": "claude-haiku-4-5",
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {
+                    "input_tokens": sub_in, "output_tokens": sub_out,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        }) + "\n", encoding="utf-8")
+
+    # Append dispatch + launched lines to main jsonl
+    with session_path.open("a", encoding="utf-8") as f:
+        for ln in dispatch_lines + launched_lines:
+            f.write(json.dumps(ln) + "\n")
+
+    # ---- Step 4-N: task-notifications interleave with assistant responses.
+    # Each task-notification fires UserPromptSubmit hook with synthetic prompt.
+    for i, aid in enumerate(agent_ids):
+        # Append a brief assistant filler turn between notifications
+        filler = {
+            "type": "assistant",
+            "uuid": f"a-fill-{i}",
+            "timestamp": f"2026-04-23T10:0{i+2}:00.000Z",
+            "message": {
+                "id": f"msg_fill_{i}",
+                "role": "assistant",
+                "model": "claude-opus-4-7",
+                "content": [{"type": "text", "text": f"waiting {i}"}],
+                "usage": {
+                    "input_tokens": 5, "output_tokens": 5,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            },
+        }
+        with session_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(filler) + "\n")
+
+        # Now write task-notification user line
+        notif_xml = (
+            f"<task-notification>\n<task-id>{aid}</task-id>\n"
+            f"<status>completed</status>\n</task-notification>"
+        )
+        notif_line = {
+            "type": "user",
+            "uuid": f"u-notif-{i}",
+            "timestamp": f"2026-04-23T10:0{i+2}:30.000Z",
+            "message": {"role": "user", "content": notif_xml},
+        }
+        with session_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(notif_line) + "\n")
+
+        # Fire UserPromptSubmit with synthetic prompt — must NOT bump offset
+        synthetic_payload = dict(payload)
+        synthetic_payload["prompt"] = notif_xml
+        assert _run("on_user_prompt.py", synthetic_payload, env).returncode == 0
+
+    # ---- Step N+1: Final assistant summary turn after all 3 done ----
+    final = {
+        "type": "assistant",
+        "uuid": "a-final",
+        "timestamp": "2026-04-23T10:10:00.000Z",
+        "message": {
+            "id": "msg_final",
+            "role": "assistant",
+            "model": "claude-opus-4-7",
+            "content": [{"type": "text", "text": "all 3 reviews done"}],
+            "usage": {
+                "input_tokens": 100, "output_tokens": 30,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        },
+    }
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(final) + "\n")
+
+    # Stop hook fires
+    payload["hook_event_name"] = "Stop"
+    payload.pop("prompt", None)
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0, r.stderr
+
+    # Verify last_summary captured all 3 sub launches
+    summary_file = (
+        fake_home / ".claude" / "plugins" / "token-tracker"
+        / "state" / session_id / "last_summary.json"
+    )
+    assert summary_file.is_file()
+    snap = json.loads(summary_file.read_text(encoding="utf-8"))
+    turns = snap["summary"]["turns"]
+
+    total_subs = sum(len(t["subagents"]) for t in turns)
+    assert total_subs == len(agent_ids), (
+        f"expected {len(agent_ids)} subs attached across turns, got {total_subs}; "
+        f"turns: {[(t.get('message_id'), len(t['subagents'])) for t in turns]}"
+    )
+
+    # Cost check: input total must include sub tokens (1000+200) * 3 + main turn tokens
+    # If subs were silently dropped, only main tokens would be counted.
+    in_total = snap["summary"]["total_input_tokens"]
+    expected_subs_input = sub_in * len(agent_ids)  # 3000
+    assert in_total >= expected_subs_input, (
+        f"sub input tokens not included; got {in_total}, expected ≥ {expected_subs_input}"
+    )
