@@ -634,6 +634,223 @@ def test_parse_tool_result_for_agent_extracts_5m_1h():
     assert s.cache_creation_1h_tokens == 200
 
 
+# ---------------------------------------------------------------------------
+# parse_user_prompt_text
+# ---------------------------------------------------------------------------
+
+
+def test_parse_user_prompt_text_string_content():
+    from lib.parser import parse_user_prompt_text
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:00:00Z",
+        "message": {"content": "Hello, world!"},
+    }
+    assert parse_user_prompt_text(entry) == "Hello, world!"
+
+
+def test_parse_user_prompt_text_list_content():
+    from lib.parser import parse_user_prompt_text
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:00:00Z",
+        "message": {
+            "content": [
+                {"type": "text", "text": "Hello from list"},
+                {"type": "image", "source": {}},
+            ]
+        },
+    }
+    assert parse_user_prompt_text(entry) == "Hello from list"
+
+
+def test_parse_user_prompt_text_returns_none_for_non_user():
+    from lib.parser import parse_user_prompt_text
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-05-03T14:00:00Z",
+        "message": {"content": "Not a user message"},
+    }
+    assert parse_user_prompt_text(entry) is None
+
+
+def test_parse_user_prompt_text_returns_none_for_malformed():
+    from lib.parser import parse_user_prompt_text
+    assert parse_user_prompt_text({}) is None
+    assert parse_user_prompt_text({"type": "user"}) is None
+    assert parse_user_prompt_text({"type": "user", "message": "bad"}) is None
+
+
+# ---------------------------------------------------------------------------
+# parse_assistant_text / parse_thinking
+# ---------------------------------------------------------------------------
+
+
+def test_parse_assistant_text_basic():
+    from lib.parser import parse_assistant_text
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-05-03T14:23:00Z",
+        "message": {
+            "content": [
+                {"type": "text", "text": "Hello user"},
+                {"type": "tool_use", "name": "Read", "id": "tu_1", "input": {}},
+            ]
+        },
+    }
+    out = parse_assistant_text(entry)
+    assert len(out) == 1
+    assert out[0]["type"] == "assistant_text"
+    assert out[0]["text"] == "Hello user"
+    assert out[0]["ts"] > 0
+
+
+def test_parse_assistant_text_skips_other_blocks():
+    from lib.parser import parse_assistant_text
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-05-03T14:23:00Z",
+        "message": {
+            "content": [
+                {"type": "thinking", "thinking": "internal thought", "signature": "sig"},
+                {"type": "tool_use", "name": "Bash", "id": "tu_2", "input": {}},
+            ]
+        },
+    }
+    out = parse_assistant_text(entry)
+    assert out == []
+
+
+def test_parse_thinking_basic():
+    from lib.parser import parse_thinking
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-05-03T14:23:00Z",
+        "message": {
+            "content": [
+                {"type": "thinking", "thinking": "deep thought", "signature": "sig"},
+                {"type": "text", "text": "answer"},
+            ]
+        },
+    }
+    out = parse_thinking(entry)
+    assert len(out) == 1
+    assert out[0]["type"] == "thinking"
+    assert out[0]["text"] == "deep thought"
+    assert out[0]["ts"] > 0
+
+
+def test_parse_thinking_returns_empty_when_none():
+    from lib.parser import parse_thinking
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-05-03T14:23:00Z",
+        "message": {"content": [{"type": "text", "text": "no thinking"}]},
+    }
+    out = parse_thinking(entry)
+    assert out == []
+
+
+# ---------------------------------------------------------------------------
+# parse_tool_call / parse_tool_result
+# ---------------------------------------------------------------------------
+
+
+def test_parse_tool_call_basic():
+    from lib.parser import parse_tool_call
+    entry = {
+        "type": "assistant",
+        "timestamp": "2026-05-03T14:23:00Z",
+        "message": {
+            "content": [
+                {"type": "text", "text": "Let me read"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_read_1",
+                    "name": "Read",
+                    "input": {"file_path": "/foo/bar.py"},
+                },
+            ]
+        },
+    }
+    out = parse_tool_call(entry)
+    assert len(out) == 1
+    assert out[0]["type"] == "tool_call"
+    assert out[0]["id"] == "toolu_read_1"
+    assert out[0]["name"] == "Read"
+    assert out[0]["input"] == {"file_path": "/foo/bar.py"}
+    assert out[0]["ts"] > 0
+
+
+def test_parse_tool_result_basic():
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_read_1",
+                    "content": "file contents here",
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert len(out) == 1
+    assert out[0]["type"] == "tool_result"
+    assert out[0]["tool_use_id"] == "toolu_read_1"
+    assert out[0]["content"] == "file contents here"
+    assert out[0]["is_error"] is False
+    assert out[0]["ts"] > 0
+
+
+def test_parse_tool_result_list_content():
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_bash_1",
+                    "content": [
+                        {"type": "text", "text": "line1"},
+                        {"type": "text", "text": "line2"},
+                    ],
+                    "is_error": True,
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert len(out) == 1
+    assert out[0]["content"] == "line1\nline2"
+    assert out[0]["is_error"] is True
+
+
+# ---------------------------------------------------------------------------
+# parse_transcript_for_history
+# ---------------------------------------------------------------------------
+
+
+def test_parse_transcript_for_history_orders_by_ts():
+    entries = [
+        {"type": "assistant", "timestamp": "2026-05-03T14:23:00Z",
+         "message": {"content": [{"type": "text", "text": "hi"}]}},
+        {"type": "user", "timestamp": "2026-05-03T14:23:01Z",
+         "message": {"content": [{"type": "tool_result", "tool_use_id": "x",
+                                  "content": "out"}]}},
+        {"type": "assistant", "timestamp": "2026-05-03T14:23:02Z",
+         "message": {"content": [{"type": "thinking", "thinking": "th"}]}},
+    ]
+    from lib.parser import parse_transcript_for_history
+    out = parse_transcript_for_history(entries)
+    assert [e["type"] for e in out] == ["assistant_text", "tool_result", "thinking"]
+
+
 def test_parse_line_prefers_nested_cc_when_both_present():
     """이중 카운팅 회귀 가드: 중첩 객체와 legacy가 동시에 박혀도 중첩만 사용."""
     from lib.parser import parse_line
