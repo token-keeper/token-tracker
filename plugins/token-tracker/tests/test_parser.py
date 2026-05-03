@@ -491,3 +491,35 @@ def test_subagent_usage_default_model_is_empty():
         cache_read_tokens=0,
     )
     assert sub.model == ""
+
+
+def test_turn_usage_has_separate_5m_and_1h_fields():
+    """TurnUsage가 cache_creation_5m_tokens / cache_creation_1h_tokens 두 필드를 가짐."""
+    from lib.parser import TurnUsage
+    t = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=10,
+        output_tokens=20,
+        cache_creation_5m_tokens=100,
+        cache_creation_1h_tokens=200,
+        cache_read_tokens=50,
+    )
+    assert t.cache_creation_5m_tokens == 100
+    assert t.cache_creation_1h_tokens == 200
+    assert not hasattr(t, "cache_creation_tokens")  # 옛 필드 제거 확인
+
+
+def test_subagent_usage_has_separate_5m_and_1h_fields():
+    from lib.parser import SubagentUsage
+    s = SubagentUsage(
+        agent_type="general-purpose",
+        tool_use_id="x",
+        input_tokens=1,
+        output_tokens=2,
+        cache_creation_5m_tokens=300,
+        cache_creation_1h_tokens=400,
+        cache_read_tokens=5,
+    )
+    assert s.cache_creation_5m_tokens == 300
+    assert s.cache_creation_1h_tokens == 400
+    assert not hasattr(s, "cache_creation_tokens")

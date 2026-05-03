@@ -10,8 +10,12 @@ class TurnUsage:
     model: str
     input_tokens: int
     output_tokens: int
-    cache_creation_tokens: int
-    cache_read_tokens: int
+    # 제거: cache_creation_tokens
+    # 신규 — default와 fallback의 1h 값(0)은 동일. 5m 값은 의미 다름:
+    #   default=값 없음, fallback=legacy 합산값을 5m로 매핑한 양수일 수 있음.
+    cache_creation_5m_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
+    cache_read_tokens: int = 0
     tools_used: list[dict] = field(default_factory=list)  # [{"name": str, "count": int}]
     timestamp_iso: str = ""
     message_id: str = ""
@@ -31,8 +35,10 @@ class SubagentUsage:
     tool_use_id: str
     input_tokens: int
     output_tokens: int
-    cache_creation_tokens: int
-    cache_read_tokens: int
+    # 제거: cache_creation_tokens
+    cache_creation_5m_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
+    cache_read_tokens: int = 0
     total_duration_ms: int = 0
     # Model used by this subagent run. Sources (in priority order):
     #   1. async sub: sidechain jsonl `assistant.message.model` (most accurate)
