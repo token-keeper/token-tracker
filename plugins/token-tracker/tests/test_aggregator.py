@@ -340,6 +340,72 @@ def test_aggregate_uses_sub_model_for_cost_when_set():
     assert math.isclose(s.total_cost, 1.0, rel_tol=1e-6)
 
 
+def test_total_input_includes_both_5m_and_1h():
+    from lib.aggregator import aggregate
+    from lib.parser import TurnUsage
+    turns = [
+        TurnUsage(
+            model="claude-opus-4-7",
+            input_tokens=100,
+            output_tokens=10,
+            cache_creation_5m_tokens=1000,
+            cache_creation_1h_tokens=2000,
+            cache_read_tokens=500,
+            message_id="msg_a",
+        )
+    ]
+    s = aggregate(turns, elapsed=1.0)
+    assert s.total_input_tokens == 100 + 1000 + 2000 + 500
+
+
+def test_aggregate_cost_uses_per_tier_rates():
+    """5m + 1h 두 단가가 정확히 적용."""
+    from lib.aggregator import aggregate
+    from lib.parser import TurnUsage
+    turns = [
+        TurnUsage(
+            model="claude-opus-4-7",
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_5m_tokens=1_000_000,  # = $6.25
+            cache_creation_1h_tokens=1_000_000,  # = $10.0
+            cache_read_tokens=0,
+            message_id="msg_b",
+        )
+    ]
+    s = aggregate(turns, elapsed=1.0)
+    assert abs(s.total_cost - (6.25 + 10.0)) < 1e-6
+
+
+def test_aggregate_5m_1h_uses_sub_model_rates():
+    """sub model이 parent와 다르면 sub 단가로 계산."""
+    from lib.aggregator import aggregate
+    from lib.parser import TurnUsage, SubagentUsage
+    sub = SubagentUsage(
+        agent_type="general-purpose",
+        tool_use_id="tu_1",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_5m_tokens=0,
+        cache_creation_1h_tokens=1_000_000,  # haiku 1h = $2.0
+        cache_read_tokens=0,
+        model="claude-haiku-4-5",
+    )
+    parent = TurnUsage(
+        model="claude-opus-4-7",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_5m_tokens=0,
+        cache_creation_1h_tokens=0,
+        cache_read_tokens=0,
+        message_id="msg_c",
+        agent_tool_use_ids=["tu_1"],
+    )
+    s = aggregate([parent], elapsed=1.0, subagents=[sub])
+    # haiku 1h $2/MT × 1M tokens = $2.0 (opus $10이 아닌)
+    assert abs(s.total_cost - 2.0) < 1e-6
+
+
 def test_aggregate_unknown_sub_model_short_alias_falls_back_to_parent_rate():
     """sub.model이 short alias('sonnet' 등 unknown 값)면 silent $0이 아니라 부모 단가.
 

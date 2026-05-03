@@ -116,7 +116,8 @@ def aggregate(
             total_cost += compute_cost(billing_model, item)
             total_input += (
                 item.input_tokens
-                + item.cache_creation_tokens
+                + item.cache_creation_5m_tokens
+                + item.cache_creation_1h_tokens
                 + item.cache_read_tokens
             )
             total_output += item.output_tokens
