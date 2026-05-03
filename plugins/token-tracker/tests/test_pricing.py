@@ -9,11 +9,11 @@ def test_known_model_cost_opus():
         model="claude-opus-4-7",
         input_tokens=1_000_000,
         output_tokens=0,
-        cache_creation_tokens=0,
         cache_read_tokens=0,
     )
     cost = pricing.compute_cost("claude-opus-4-7", u)
-    assert math.isclose(cost, 15.0, rel_tol=1e-6)
+    # Opus 4.7 신단가 input = $5/MTok
+    assert math.isclose(cost, 5.0, rel_tol=1e-6)
 
 
 def test_cache_read_is_cheaper_than_input():
@@ -21,14 +21,12 @@ def test_cache_read_is_cheaper_than_input():
         model="claude-opus-4-7",
         input_tokens=0,
         output_tokens=0,
-        cache_creation_tokens=0,
         cache_read_tokens=1_000_000,
     )
     u_input = TurnUsage(
         model="claude-opus-4-7",
         input_tokens=1_000_000,
         output_tokens=0,
-        cache_creation_tokens=0,
         cache_read_tokens=0,
     )
     assert pricing.compute_cost("claude-opus-4-7", u_cache) < pricing.compute_cost(
@@ -41,7 +39,6 @@ def test_unknown_model_returns_zero():
         model="claude-ghost-1",
         input_tokens=1_000_000,
         output_tokens=1_000_000,
-        cache_creation_tokens=0,
         cache_read_tokens=0,
     )
     assert pricing.compute_cost("claude-ghost-1", u) == 0.0
@@ -52,7 +49,6 @@ def test_sonnet_known():
         model="claude-sonnet-4-6",
         input_tokens=1_000_000,
         output_tokens=0,
-        cache_creation_tokens=0,
         cache_read_tokens=0,
     )
     assert pricing.compute_cost("claude-sonnet-4-6", u) == 3.0
@@ -63,7 +59,6 @@ def test_haiku_known():
         model="claude-haiku-4-5",
         input_tokens=1_000_000,
         output_tokens=0,
-        cache_creation_tokens=0,
         cache_read_tokens=0,
     )
     assert pricing.compute_cost("claude-haiku-4-5", u) > 0.0
@@ -75,10 +70,10 @@ def test_prefix_match_opus_with_context_suffix():
         model="claude-opus-4-7[1m]",
         input_tokens=1_000_000,
         output_tokens=0,
-        cache_creation_tokens=0,
         cache_read_tokens=0,
     )
-    assert math.isclose(pricing.compute_cost("claude-opus-4-7[1m]", u), 15.0, rel_tol=1e-6)
+    # Opus 4.7 신단가 input = $5/MTok
+    assert math.isclose(pricing.compute_cost("claude-opus-4-7[1m]", u), 5.0, rel_tol=1e-6)
 
 
 def test_prefix_match_sonnet_with_date_suffix():
@@ -87,7 +82,6 @@ def test_prefix_match_sonnet_with_date_suffix():
         model="claude-sonnet-4-6-20260101",
         input_tokens=1_000_000,
         output_tokens=0,
-        cache_creation_tokens=0,
         cache_read_tokens=0,
     )
     assert pricing.compute_cost("claude-sonnet-4-6-20260101", u) == 3.0
@@ -100,7 +94,8 @@ def test_prefix_match_picks_longest_key():
     p.PRICING["claude-opus-4-7-turbo"] = {
         "input": 99.0,
         "output": 99.0,
-        "cache_creation": 99.0,
+        "cache_creation_5m": 99.0,
+        "cache_creation_1h": 99.0,
         "cache_read": 99.0,
     }
     try:
@@ -108,7 +103,6 @@ def test_prefix_match_picks_longest_key():
             model="claude-opus-4-7-turbo-2026",
             input_tokens=1_000_000,
             output_tokens=0,
-            cache_creation_tokens=0,
             cache_read_tokens=0,
         )
         # Both "claude-opus-4-7" and "claude-opus-4-7-turbo" match; longer wins.
@@ -149,28 +143,27 @@ def test_compute_cost_accepts_subagent_usage():
     """compute_cost는 duck-typing으로 SubagentUsage도 처리해야 한다 (D6 부모 모델 단가 추정 경로).
 
     aggregator는 부모 turn 모델로 SubagentUsage를 합산해 비용을 산정한다 — TurnUsage와
-    같은 4개 토큰 필드를 갖는 객체는 모두 동일한 결과를 내야 한다 (회귀 가드).
+    같은 토큰 필드를 갖는 객체는 모두 동일한 결과를 내야 한다 (회귀 가드).
     """
     sub = SubagentUsage(
         agent_type="general-purpose",
         tool_use_id="toolu_xyz",
         input_tokens=1_000_000,
         output_tokens=500_000,
-        cache_creation_tokens=0,
         cache_read_tokens=2_000_000,
     )
     turn = TurnUsage(
         model="claude-opus-4-7",
         input_tokens=1_000_000,
         output_tokens=500_000,
-        cache_creation_tokens=0,
         cache_read_tokens=2_000_000,
     )
     sub_cost = pricing.compute_cost("claude-opus-4-7", sub)
     turn_cost = pricing.compute_cost("claude-opus-4-7", turn)
     assert math.isclose(sub_cost, turn_cost, rel_tol=1e-9)
-    # Sanity: 1M input * $15 + 0.5M output * $75 + 2M cache_read * $1.5 = 15 + 37.5 + 3 = 55.5
-    assert math.isclose(sub_cost, 55.5, rel_tol=1e-9)
+    # Sanity: Opus 4.7 신단가 — 1M input * $5 + 0.5M output * $25 + 2M cache_read * $0.50
+    # = 5 + 12.5 + 1.0 = 18.5
+    assert math.isclose(sub_cost, 18.5, rel_tol=1e-9)
 
 
 def test_pricing_opus_4_7_all_rates_absolute():
