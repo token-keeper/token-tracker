@@ -6,7 +6,7 @@
 
 ## 1. 한 줄 요약
 
-token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.6.3 (hot-fix)** — async background dispatch가 활성 중이면 매 Stop마다 끼어들지 않고 모두 끝난 시점 1번만 emit (윈도우 회귀 fix로 dispatch가 이전 turn에 있어도 정확 감지). detail 표 `툴` 칼럼이 thinking/tool_use 라인 dedupe 시 silent drop되던 버그 fix. `/token-detail` sub 행이 `└ sub: general-purpose [sonnet 4.6]`처럼 model까지 표시하고, sub의 model을 알 때는 그 단가로 정확히 비용 산정. unknown alias("sonnet" 등)도 부모 단가로 안전 fallback. **233 tests passing**. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력(결정론적, LLM 우회), `/token-detail`로 주문형 조회, `/token-verbose [on|off]`로 verbose 토글 — 모두 slash로 수동 호출 전용(`disable-model-invocation: true`).
+token-tracker = Claude Code 플러그인. Stop hook이 발화할 때마다 방금 끝난 사용자 요청의 토큰·비용을 한 줄 요약으로 출력한다. **현재 v0.6.4** — offset 갱신 정책 명문화: on_stop은 절대 offset을 갱신하지 않으며, on_user_prompt가 유일한 갱신점이다. 한 사용자 입력 = 한 누적 last_summary로 메인의 모든 응답 turn + 모든 sub 결과가 합산되어야 한다는 의도를 회귀 가드 + 코드 주석으로 codify. async background dispatch가 활성 중이면 매 Stop마다 끼어들지 않고 모두 끝난 시점 1번만 emit (윈도우 회귀 fix로 dispatch가 이전 turn에 있어도 정확 감지). detail 표 `툴` 칼럼이 thinking/tool_use 라인 dedupe 시 silent drop되던 버그 fix. `/token-detail` sub 행이 `└ sub: general-purpose [sonnet 4.6]`처럼 model까지 표시하고, sub의 model을 알 때는 그 단가로 정확히 비용 산정. unknown alias("sonnet" 등)도 부모 단가로 안전 fallback. **245 tests passing**. `config.json`의 `verbose: true`로 매 응답마다 turn별 상세 표를 자동 출력(결정론적, LLM 우회), `/token-detail`로 주문형 조회, `/token-verbose [on|off]`로 verbose 토글 — 모두 slash로 수동 호출 전용(`disable-model-invocation: true`).
 
 **v0.6.2 (2026-05-02)**: sub 행이 model 정보까지 노출. async sub은 sidechain `message.model`, foreground sub은 dispatch 시 `input.model`. 둘 다 모르면 부모 단가 fallback + legend 안내. 모든 sub model이 알려지면 정확 비용이라 legend 생략. 188 → 205 tests.
 
@@ -260,6 +260,25 @@ v0.6.2 출시 후 사용자 실측에서 발견된 두 가지 회귀를 같은 h
 - `fix(aggregator): _dedupe_by_message_id가 tools_used도 merge (count 합산)`
 - `chore(release): bump to 0.6.3 + handoff 갱신 (hot-fix)`
 
+### F-5. v0.6.4: offset 갱신 정책 명문화 (2026-04-23)
+
+**의도:** 사용자가 한 번 입력하면 token-tracker는 한 번만 출력하고, 그 출력에는 그 입력에 대한 메인의 모든 응답 turn + 모든 sub 결과가 누적되어야 한다.
+
+**핵심 변경:**
+- `hooks/on_stop.py`: offset 갱신 정책을 코드 주석으로 명문화 — `on_stop은 absolutely offset을 갱신하지 않는다. 유일한 갱신점은 on_user_prompt`. (실제 코드는 이미 정책대로지만 주석이 없어 미래 누군가 `state["offset"] = file_size`를 다시 추가할 위험이 있었음.)
+- 회귀 가드 e2e 테스트 2건:
+  - `test_offset_not_advanced_by_stop_so_summary_accumulates_across_turns`: turn 1만 있을 때 첫 Stop → turn 1 + turn 2 있을 때 두 번째 Stop. last_summary가 누적되어 turns≥2 + total_input_tokens 증가 검증.
+  - `test_offset_resets_on_new_user_prompt`: 새 user_prompt가 들어오면 그 시점의 file_size로 offset 초기화. 두 번째 사용자 입력의 last_summary는 이전 입력의 turn을 포함하지 않음.
+
+**왜 dedupe로 충분한가:** 매 Stop은 user_prompt 시점부터의 모든 entries를 반복 read한다. 비용 측면에서는 `_read_tail` + parse가 매번 실행되지만 turns/subs는 `_dedupe_by_message_id`(turn) + `tool_use_id` 매칭(sub)으로 정합성이 유지된다. 장기 turn(수십 응답)에서 read 비용이 문제되면 후속에서 incremental cache로 최적화 가능.
+
+**테스트 +2건. 243 → 245 passing.**
+
+**커밋:**
+- `fix(hook): on_stop이 offset을 갱신하지 않음 — 한 사용자 입력에 대한 누적 last_summary 보존`
+- `test(e2e): offset 누적 정책 회귀 가드`
+- `chore(release): bump to 0.6.4 + handoff 갱신 (offset 정책)`
+
 ---
 
 ## 6. 사용자 성향 메모 (빠르게 협업하려면 알면 좋음)
@@ -293,7 +312,7 @@ v0.6.2 출시 후 사용자 실측에서 발견된 두 가지 회귀를 같은 h
 | Claude Code 설치 경로 | `~/.claude/plugins/cache/token-tracker-local/token-tracker/0.1.0/` |
 | state 디렉터리 | `~/.claude/plugins/token-tracker/state/` |
 | 에러 로그 | `~/.claude/plugins/token-tracker/log/error.log` |
-| 최신 태그 | `v0.6.3` (hot-fix: launches 윈도우 + tools_used merge) |
-| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`), `v0.5.1` (리뷰 MAJOR 회수), `v0.6.0` (subagent 토큰), `v0.6.1` (리뷰 보강 + timing 회귀 fix), `v0.6.2` (sub 모델 표시 + 정확 비용), `v0.6.3` (launches 윈도우 + tools_used 회귀 hot-fix) |
-| 테스트 수 | 238 passing (v0.6.3 + T16 추가 hot-fix 후) |
+| 최신 태그 | `v0.6.4` (offset 갱신 정책 명문화) |
+| 주요 태그 | `v0.1.0-mvp`, `v0.2.0` (marketplace), `v0.3.0` (`/token-detail`), `v0.3.1` (hotfix), `v0.4.0` (verbose), `v0.5.0` (`/token-verbose`), `v0.5.1` (리뷰 MAJOR 회수), `v0.6.0` (subagent 토큰), `v0.6.1` (리뷰 보강 + timing 회귀 fix), `v0.6.2` (sub 모델 표시 + 정확 비용), `v0.6.3` (launches 윈도우 + tools_used 회귀 hot-fix), `v0.6.4` (offset 정책 명문화) |
+| 테스트 수 | 245 passing (v0.6.4 offset 정책 회귀 가드 후) |
 | 테스트 실행 | `./venv/bin/pytest plugins/token-tracker/tests -q` (repo 루트 기준) |
