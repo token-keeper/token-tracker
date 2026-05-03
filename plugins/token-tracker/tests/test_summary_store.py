@@ -243,6 +243,47 @@ def test_load_v2_sub_without_model_defaults_to_empty(monkeypatch, tmp_path):
     assert loaded.turns[0].subagents[0].model == ""
 
 
+def test_save_writes_v3(monkeypatch, tmp_path):
+    """v3 schema_version으로 저장되고 turns의 cache_creation_5m/1h 키가 분리되어 직렬화된다."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    summary = Summary(
+        total_cost=1.0, total_input_tokens=100, total_output_tokens=50,
+        cache_hit_rate=0.5, total_elapsed=1.0,
+        turns=[TurnUsage(
+            model="claude-opus-4-7", input_tokens=10, output_tokens=20,
+            cache_creation_5m_tokens=30, cache_creation_1h_tokens=40,
+            cache_read_tokens=5, message_id="m1",
+        )],
+    )
+    summary_store.save_last_summary("test_v3_session", summary)
+    target = paths.state_dir() / "test_v3_session" / "last_summary.json"
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 3
+    t = data["summary"]["turns"][0]
+    assert t["cache_creation_5m_tokens"] == 30
+    assert t["cache_creation_1h_tokens"] == 40
+    assert "cache_creation_tokens" not in t
+
+
+def test_load_v3_roundtrip(monkeypatch, tmp_path):
+    """v3 형식으로 저장한 뒤 load 시 5m/1h 필드가 그대로 복원된다."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    summary = Summary(
+        total_cost=1.0, total_input_tokens=100, total_output_tokens=50,
+        cache_hit_rate=0.5, total_elapsed=1.0,
+        turns=[TurnUsage(
+            model="claude-opus-4-7", input_tokens=10, output_tokens=20,
+            cache_creation_5m_tokens=30, cache_creation_1h_tokens=40,
+            cache_read_tokens=5, message_id="m1",
+        )],
+    )
+    summary_store.save_last_summary("test_roundtrip", summary)
+    loaded = summary_store.load_last_summary("test_roundtrip")
+    assert loaded is not None
+    assert loaded.turns[0].cache_creation_5m_tokens == 30
+    assert loaded.turns[0].cache_creation_1h_tokens == 40
+
+
 def test_load_v2_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     sub_a = _sub(tool_use_id="toolu_a", agent_type="agent-a", input_tokens=1)

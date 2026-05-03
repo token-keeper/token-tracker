@@ -14,8 +14,8 @@ from lib.aggregator import Summary
 from lib.parser import SubagentUsage, TurnUsage
 
 
-SCHEMA_VERSION = 2
-SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+SCHEMA_VERSION = 3
+SUPPORTED_SCHEMA_VERSIONS = (3,)
 
 
 def _summary_path(session_id: str) -> Path:
@@ -49,7 +49,8 @@ _TURN_KEYS = (
     "model",
     "input_tokens",
     "output_tokens",
-    "cache_creation_tokens",
+    "cache_creation_5m_tokens",
+    "cache_creation_1h_tokens",
     "cache_read_tokens",
     "tools_used",
     "timestamp_iso",
@@ -64,7 +65,8 @@ _SUB_KEYS = (
     "tool_use_id",
     "input_tokens",
     "output_tokens",
-    "cache_creation_tokens",
+    "cache_creation_5m_tokens",
+    "cache_creation_1h_tokens",
     "cache_read_tokens",
     "total_duration_ms",
     "model",
