@@ -75,7 +75,9 @@ def append_or_update_history(
 ) -> None:
     """Append a new entry, OR rewrite the last line in-place when the last
     line's prompt_id matches `prompt_id` (spec §4.4 dedupe policy: one
-    user prompt = one row, even when multiple Stops fire)."""
+    user prompt = one row, even when multiple Stops fire).
+
+    `summary_dict`: pass `dataclasses.asdict(Summary)` from `lib.aggregator`."""
     path = _history_path(session_id)
     envelope = _build_envelope(
         prompt_id=prompt_id, session_id=session_id,
@@ -105,6 +107,9 @@ def append_or_update_history(
                 _atomic_write_lines(path, existing)
                 return
         except json.JSONDecodeError:
+            # Last line is corrupted JSON. Append the new entry rather than
+            # try to rewrite — load_session_history will skip the bad line on
+            # read, and preserving it leaves a forensic trail.
             pass
 
     _atomic_write_lines(path, existing + [new_line])
@@ -118,7 +123,8 @@ def load_session_history(session_id: str) -> list[dict]:
     out: list[dict] = []
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        print(f"[history_store] failed to read {path}: {exc}", file=sys.stderr)
         return []
     for line in text.splitlines():
         line = line.strip()
