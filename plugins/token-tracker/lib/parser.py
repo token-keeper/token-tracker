@@ -227,6 +227,153 @@ def parse_async_launch(entry: dict) -> tuple[str, str] | None:
     return (tool_use_id, str(agent_id))
 
 
+def parse_user_prompt_text(entry: dict) -> str | None:
+    """Extract user prompt text from a 'user' entry.
+
+    Handles both `content: "string"` and `content: [{"type":"text","text":"..."}]`
+    formats. Returns None when entry shape doesn't match.
+    """
+    if not isinstance(entry, dict) or entry.get("type") != "user":
+        return None
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return None
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                t = block.get("text")
+                if isinstance(t, str):
+                    return t
+    return None
+
+
+def _entry_ts(entry: dict) -> float:
+    return _iso_to_epoch(entry.get("timestamp", "")) or 0.0
+
+
+def parse_assistant_text(entry: dict) -> list[dict]:
+    """Extract assistant text blocks (excluding thinking, tool_use). Returns
+    list of {"type":"assistant_text", "ts": float, "text": str}."""
+    if not isinstance(entry, dict) or entry.get("type") != "assistant":
+        return []
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return []
+    content = msg.get("content") or []
+    if not isinstance(content, list):
+        return []
+    ts = _entry_ts(entry)
+    out: list[dict] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str):
+                out.append({"type": "assistant_text", "ts": ts, "text": text})
+    return out
+
+
+def parse_thinking(entry: dict) -> list[dict]:
+    """Extract thinking blocks. Returns list of
+    {"type":"thinking", "ts": float, "text": str}."""
+    if not isinstance(entry, dict) or entry.get("type") != "assistant":
+        return []
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return []
+    content = msg.get("content") or []
+    if not isinstance(content, list):
+        return []
+    ts = _entry_ts(entry)
+    out: list[dict] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "thinking":
+            t = block.get("thinking")
+            if isinstance(t, str):
+                out.append({"type": "thinking", "ts": ts, "text": t})
+    return out
+
+
+def parse_tool_call(entry: dict) -> list[dict]:
+    """Extract tool_use blocks from assistant entry. Returns list of
+    {"type":"tool_call", "ts": float, "id": str, "name": str, "input": dict}."""
+    if not isinstance(entry, dict) or entry.get("type") != "assistant":
+        return []
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return []
+    content = msg.get("content") or []
+    if not isinstance(content, list):
+        return []
+    ts = _entry_ts(entry)
+    out: list[dict] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            out.append({
+                "type": "tool_call",
+                "ts": ts,
+                "id": block.get("id", ""),
+                "name": block.get("name", ""),
+                "input": block.get("input", {}),
+            })
+    return out
+
+
+def parse_tool_result(entry: dict) -> list[dict]:
+    """Extract tool_result blocks from user entry (Claude Code injects results
+    as user messages). Normalizes content to a single string."""
+    if not isinstance(entry, dict) or entry.get("type") != "user":
+        return []
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return []
+    content = msg.get("content") or []
+    if not isinstance(content, list):
+        return []
+    ts = _entry_ts(entry)
+    out: list[dict] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_result":
+            raw = block.get("content")
+            if isinstance(raw, str):
+                text = raw
+            elif isinstance(raw, list):
+                parts: list[str] = []
+                for sub in raw:
+                    if isinstance(sub, dict) and sub.get("type") == "text":
+                        t = sub.get("text")
+                        if isinstance(t, str):
+                            parts.append(t)
+                text = "\n".join(parts)
+            else:
+                text = ""
+            out.append({
+                "type": "tool_result",
+                "ts": ts,
+                "tool_use_id": block.get("tool_use_id", ""),
+                "content": text,
+                "is_error": bool(block.get("is_error", False)),
+            })
+    return out
+
+
+def parse_transcript_for_history(entries: list[dict]) -> list[dict]:
+    """Aggregate transcript entries into the spec §4.1 transcript_entries
+    format. Excludes user prompt text (that's stored separately as
+    user_prompt.text). Sort by ts ascending; entries with ts=0.0 (missing
+    timestamp) keep insertion order via Python's stable sort."""
+    out: list[dict] = []
+    for e in entries:
+        out.extend(parse_thinking(e))
+        out.extend(parse_assistant_text(e))
+        out.extend(parse_tool_call(e))
+        out.extend(parse_tool_result(e))
+    out.sort(key=lambda x: x["ts"])
+    return out
+
+
 def parse_sidechain_assistant(
     entry: dict,
     agent_type: str,

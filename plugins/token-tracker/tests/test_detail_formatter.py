@@ -345,3 +345,50 @@ def test_detail_legend_present_when_sub_model_is_unknown_alias():
     assert "subagent 비용은 부모 모델 단가로 추정" in out_ko, (
         f"unknown alias should trigger legend; got:\n{out_ko}"
     )
+
+
+# --- K/M compact number formatting ---
+
+def test_fmt_compact_number_under_10k_uses_comma():
+    from lib.detail_formatter import _fmt_compact_number
+    assert _fmt_compact_number(0) == "0"
+    assert _fmt_compact_number(123) == "123"
+    assert _fmt_compact_number(1500) == "1,500"
+    assert _fmt_compact_number(9999) == "9,999"
+
+
+def test_fmt_compact_number_thousands_uses_K():
+    from lib.detail_formatter import _fmt_compact_number
+    assert _fmt_compact_number(10_000) == "10.00K"   # 6 chars
+    assert _fmt_compact_number(12_345) == "12.35K"   # 6 chars
+    assert _fmt_compact_number(99_994) == "99.99K"   # 2-decimal upper bound
+    assert _fmt_compact_number(99_995) == "100.0K"   # promote precision: 6 chars
+    assert _fmt_compact_number(421_180) == "421.2K"  # 6 chars (1-decimal)
+    assert _fmt_compact_number(999_949) == "999.9K"  # last K value
+    assert _fmt_compact_number(999_950) == "1.00M"   # promote to M
+    assert _fmt_compact_number(999_999) == "1.00M"
+
+
+def test_fmt_compact_number_millions_uses_M():
+    from lib.detail_formatter import _fmt_compact_number
+    assert _fmt_compact_number(1_000_000) == "1.00M"
+    assert _fmt_compact_number(1_500_000) == "1.50M"
+    assert _fmt_compact_number(12_345_678) == "12.35M"
+    assert _fmt_compact_number(421_000_000) == "421.0M"  # 1-decimal
+
+
+def test_fmt_compact_number_billions_uses_B():
+    from lib.detail_formatter import _fmt_compact_number
+    assert _fmt_compact_number(1_000_000_000) == "1.00B"
+    assert _fmt_compact_number(2_500_000_000) == "2.50B"
+
+
+def test_format_detail_uses_compact_for_large_cache_creation():
+    """Regression for the user-reported `421...` truncation."""
+    turn = _turn(input_tokens=6, cache_creation_5m_tokens=421_180,
+                 cache_creation_1h_tokens=0, cache_read_tokens=15_526,
+                 output_tokens=2_144)
+    out = format_detail(_summary([turn]), "ko")
+    assert "421.2K" in out  # adaptive precision (was "421...")
+    assert "15.53K" in out  # cache_read_tokens
+    assert "421..." not in out  # truncation gone

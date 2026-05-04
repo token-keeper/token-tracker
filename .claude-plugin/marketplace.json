@@ -9,7 +9,7 @@
       "name": "token-tracker",
       "source": "./plugins/token-tracker",
       "description": "한 번의 프롬프트가 소비한 토큰·비용을 Stop hook 응답 블록에 한 줄로 표시",
-      "version": "0.7.0"
+      "version": "0.8.0"
     }
   ]
 }

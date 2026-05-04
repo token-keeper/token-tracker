@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="__LANG__"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="cache-control" content="no-store">
+<title>token-tracker history</title>
+
+<script id="i18n" type="application/json">
+{
+  "ko": {
+    "title": "token-tracker history",
+    "subtitleFmt": "생성: {ts} · token-tracker {ver}",
+    "tabs": { "current": "현재 세션", "all": "전체 세션" },
+    "search": "prompt 검색...",
+    "modelAll": "all models",
+    "sessionAll": "all sessions",
+    "summaryFmt": "total {cost} · {toks} toks · {cache} cache · {elapsed}",
+    "cols": {
+      "n": "#", "time": "시각", "prompt": "prompt", "model": "model",
+      "cost": "cost", "in": "in", "out": "out", "cc": "cc%", "elapsed": "elapsed"
+    },
+    "empty": "데이터 없음",
+    "themeLight": "라이트",
+    "themeDark": "다크",
+    "themeAuto": "자동",
+    "rowsFmt": "{n}건",
+    "turnsHeader": "{n}개 turn · {cost} · {tools}개 tool 호출",
+    "expandAll": "모두 펼치기",
+    "collapseAll": "모두 접기",
+    "thinking": "THINKING",
+    "assistantText": "ASSISTANT",
+    "toolCall": "TOOL CALL",
+    "toolResult": "TOOL RESULT",
+    "turnColInput": "input",
+    "turnColCC": "cc",
+    "turnColCR": "cr",
+    "turnColOutput": "output",
+    "turnColTools": "tools",
+    "noTools": "—",
+    "errorBadge": "ERROR",
+    "noContent": "(내용 없음)"
+  },
+  "en": {
+    "title": "token-tracker history",
+    "subtitleFmt": "generated: {ts} · token-tracker {ver}",
+    "tabs": { "current": "Current session", "all": "All sessions" },
+    "search": "search prompts...",
+    "modelAll": "all models",
+    "sessionAll": "all sessions",
+    "summaryFmt": "total {cost} · {toks} toks · {cache} cache · {elapsed}",
+    "cols": {
+      "n": "#", "time": "time", "prompt": "prompt", "model": "model",
+      "cost": "cost", "in": "in", "out": "out", "cc": "cc%", "elapsed": "elapsed"
+    },
+    "empty": "No data",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeAuto": "Auto",
+    "rowsFmt": "{n} rows",
+    "turnsHeader": "{n} turns · {cost} · {tools} tool calls",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "thinking": "THINKING",
+    "assistantText": "ASSISTANT",
+    "toolCall": "TOOL CALL",
+    "toolResult": "TOOL RESULT",
+    "turnColInput": "input",
+    "turnColCC": "cc",
+    "turnColCR": "cr",
+    "turnColOutput": "output",
+    "turnColTools": "tools",
+    "noTools": "—",
+    "errorBadge": "ERROR",
+    "noContent": "(no content)"
+  }
+}
+</script>
+
+<script id="meta" type="application/json">{"ts":"__GENERATED_AT__","ver":"__VERSION__"}</script>
+<script id="data-current" type="application/json">__DATA_CURRENT__</script>
+<script id="data-all" type="application/json">__DATA_ALL__</script>
+
+<style>__CSS__</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <div>
+      <h1 id="page-title"></h1>
+      <div class="sub" id="page-sub"></div>
+    </div>
+    <div class="theme-group" role="group" aria-label="theme">
+      <button data-theme-btn="light" id="t-light"></button>
+      <button data-theme-btn="auto" id="t-auto"></button>
+      <button data-theme-btn="dark" id="t-dark"></button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" id="tabs">
+    <button class="tab" role="tab" data-tab="current" aria-selected="true">
+      <span data-i18n="tabs.current"></span><span class="count" id="count-current"></span>
+    </button>
+    <button class="tab" role="tab" data-tab="all" aria-selected="false">
+      <span data-i18n="tabs.all"></span><span class="count" id="count-all"></span>
+    </button>
+  </nav>
+
+  <div class="filters">
+    <input class="input" id="q" type="search">
+    <select class="select" id="model"></select>
+    <select class="select" id="session" style="display:none"></select>
+  </div>
+
+  <div class="summary">
+    <span id="summary-line"></span>
+    <span class="rows-count" id="rows-count"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table id="tbl" aria-label="token history">
+      <thead>
+        <tr>
+          <th class="c-n" data-key="n" aria-sort="none"><button type="button"><span data-i18n="cols.n"></span><span class="sort-ind">·</span></button></th>
+          <th class="c-time" data-key="time" aria-sort="descending"><button type="button"><span data-i18n="cols.time"></span><span class="sort-ind">▼</span></button></th>
+          <th class="c-prompt"><span data-i18n="cols.prompt"></span></th>
+          <th class="c-model" data-key="model" aria-sort="none"><button type="button"><span data-i18n="cols.model"></span><span class="sort-ind">·</span></button></th>
+          <th class="c-cost" data-key="cost" aria-sort="none"><button type="button"><span data-i18n="cols.cost"></span><span class="sort-ind">·</span></button></th>
+          <th class="c-in" data-key="in" aria-sort="none" style="text-align:right"><button type="button"><span data-i18n="cols.in"></span><span class="sort-ind">·</span></button></th>
+          <th class="c-out" data-key="out" aria-sort="none" style="text-align:right"><button type="button"><span data-i18n="cols.out"></span><span class="sort-ind">·</span></button></th>
+          <th class="c-cc" data-key="cache" aria-sort="none"><button type="button"><span data-i18n="cols.cc"></span><span class="sort-ind">·</span></button></th>
+          <th class="c-elapsed" data-key="elapsed" aria-sort="none" style="text-align:right"><button type="button"><span data-i18n="cols.elapsed"></span><span class="sort-ind">·</span></button></th>
+          <th class="c-chev"></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>__JS__</script>
+</body></html>

@@ -167,6 +167,43 @@ def main() -> int:
             except Exception:
                 _log_error(f"[on_stop] save_last_summary: {traceback.format_exc()}")
 
+            # /token-history (v0.8.0): persist history.jsonl entry. Same gate
+            # as last_summary (only when turns exist). Failure here must NOT
+            # break the existing emit / async early-return flow.
+            try:
+                # state is normalized to {} above (line 87) so dict-access is safe.
+                pid = state.get("prompt_id")
+                if pid:
+                    from lib.history_store import append_or_update_history
+                    from lib.parser import parse_transcript_for_history
+                    transcript_entries_for_hist = parse_transcript_for_history(entries)
+
+                    # Compute models_used + has_subagent_other_model
+                    models_seen: list[str] = []
+                    has_other = False
+                    for t in summary.turns:
+                        if t.model and t.model not in models_seen:
+                            models_seen.append(t.model)
+                        for s in t.subagents:
+                            sm = getattr(s, "model", "")
+                            if sm and sm != t.model:
+                                has_other = True
+
+                    from dataclasses import asdict
+                    append_or_update_history(
+                        session_id=session_id,
+                        prompt_id=pid,
+                        user_prompt_text=state.get("prompt_text", ""),
+                        started_at=started_at,
+                        ended_at=time.time(),
+                        summary_dict=asdict(summary),
+                        models_used=models_seen,
+                        has_subagent_other_model=has_other,
+                        transcript_entries=transcript_entries_for_hist,
+                    )
+            except Exception:
+                _log_error(f"[on_stop] history_store: {traceback.format_exc()}")
+
         from lib.config import load_config, get_language, is_verbose
 
         cfg = load_config(plugin_root)

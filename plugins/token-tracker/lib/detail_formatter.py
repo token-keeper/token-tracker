@@ -86,6 +86,41 @@ def _pad(s: str, width: int, align: str) -> str:
     return pad + s if align == "right" else s + pad
 
 
+def _fmt_compact_number(n: int) -> str:
+    """Compact token-count display, output ≤6 visible chars to fit table cells.
+
+    < 10,000           : comma (e.g. "9,999")
+    10,000~99,994      : "NN.NNK" (2 decimals)
+    99,995~999,949     : "NNN.NK" (1 decimal — keeps to 6 chars)
+    999,950~99,994,999 : promote to M, same adaptive precision
+    99,995,000~        : promote to B
+
+    Threshold = 10_000 chosen to avoid noisy K-suffix on small numbers
+    while preventing the previous `421...` truncation on cache_creation
+    columns that routinely exceed terminal column width (cc=6).
+    """
+    if n < 10_000:
+        return f"{n:,}"
+    if n < 1_000_000:
+        scaled = n / 1_000
+        if scaled < 99.995:
+            return f"{scaled:.2f}K"
+        if scaled < 999.95:
+            return f"{scaled:.1f}K"
+        return f"{n / 1_000_000:.2f}M"  # promote to keep ≤6 chars
+    if n < 1_000_000_000:
+        scaled = n / 1_000_000
+        if scaled < 99.995:
+            return f"{scaled:.2f}M"
+        if scaled < 999.95:
+            return f"{scaled:.1f}M"
+        return f"{n / 1_000_000_000:.2f}B"
+    scaled = n / 1_000_000_000
+    if scaled < 99.995:
+        return f"{scaled:.2f}B"
+    return f"{scaled:.1f}B"
+
+
 def _format_tools(tools: list[dict]) -> str:
     if not tools:
         return "—"
@@ -196,10 +231,10 @@ def format_detail(summary: Summary, language: str) -> str:
             str(turn.index + 1),
             turn.model,
             _format_tools(turn.tools_used),
-            f"{turn.input_tokens:,}",
-            f"{(turn.cache_creation_5m_tokens + turn.cache_creation_1h_tokens):,}",
-            f"{turn.cache_read_tokens:,}",
-            f"{turn.output_tokens:,}",
+            _fmt_compact_number(turn.input_tokens),
+            _fmt_compact_number(turn.cache_creation_5m_tokens + turn.cache_creation_1h_tokens),
+            _fmt_compact_number(turn.cache_read_tokens),
+            _fmt_compact_number(turn.output_tokens),
             cost,
             t_str,
         ]
@@ -222,10 +257,10 @@ def format_detail(summary: Summary, language: str) -> str:
                 "",  # # column blank for child rows
                 _sub_label(sub, sub_prefix),
                 "",  # tools column blank for child rows (T6 future)
-                f"{sub.input_tokens:,}",
-                f"{(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens):,}",
-                f"{sub.cache_read_tokens:,}",
-                f"{sub.output_tokens:,}",
+                _fmt_compact_number(sub.input_tokens),
+                _fmt_compact_number(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens),
+                _fmt_compact_number(sub.cache_read_tokens),
+                _fmt_compact_number(sub.output_tokens),
                 sub_cost,
                 _sub_time_str(sub),
             ]
