@@ -132,24 +132,84 @@ def test_flatten_entry_handles_empty_models():
     assert f["model"] == ""
 
 
-def test_extract_response_concatenates_assistant_text():
-    from lib.history_renderer import _extract_response_text
-    entries = [
-        {"type": "thinking", "ts": 1.0, "text": "internal"},
-        {"type": "assistant_text", "ts": 2.0, "text": "first"},
-        {"type": "tool_call", "ts": 3.0, "name": "Read"},
-        {"type": "assistant_text", "ts": 4.0, "text": "second"},
+def test_build_turn_cards_basic_mapping_and_grouping():
+    """Each turn N owns transcript entries in [turn[N].started_at,
+    turn[N+1].started_at). Verify thinking/assistant/tool_call/tool_result are
+    routed correctly and turn-level token/cost fields populated."""
+    from lib.history_renderer import _build_turn_cards
+    summary = {
+        "turns": [
+            {
+                "model": "claude-opus-4-7", "started_at": 100.0,
+                "input_tokens": 5, "output_tokens": 50,
+                "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 200,
+                "cache_read_tokens": 1000,
+                "tools_used": [{"name": "Read", "count": 1}],
+            },
+            {
+                "model": "claude-opus-4-7", "started_at": 110.0,
+                "input_tokens": 3, "output_tokens": 30,
+                "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                "cache_read_tokens": 500,
+                "tools_used": [],
+            },
+        ]
+    }
+    transcript = [
+        {"type": "thinking", "ts": 100.5, "text": "T1 thought"},
+        {"type": "tool_call", "ts": 100.7, "name": "Read", "input": {"path": "/x"}},
+        {"type": "tool_result", "ts": 100.9, "content": "ok", "is_error": False},
+        {"type": "assistant_text", "ts": 110.5, "text": "done"},
     ]
-    out = _extract_response_text(entries)
-    assert out == "first\n\nsecond"
+    cards = _build_turn_cards(summary, transcript, ended_at=115.0)
+    assert len(cards) == 2
+    c1, c2 = cards
+    assert c1["n"] == 1 and c1["model"] == "opus 4.7"
+    assert c1["thinking"] == "T1 thought"
+    assert c1["tool_call"] == {"name": "Read", "input": {"path": "/x"}}
+    assert c1["tool_result"] == {"content": "ok", "is_error": False}
+    assert c1["assistant_text"] == ""
+    assert c1["elapsed"] == 10.0  # 110 - 100
+    assert c1["cost"] > 0
+    assert c2["n"] == 2
+    assert c2["assistant_text"] == "done"
+    assert c2["thinking"] == ""
+    assert c2["tool_call"] is None
+    assert c2["elapsed"] == 5.0  # ended_at(115) - started_at(110)
 
 
-def test_extract_response_caps_at_50kb():
-    from lib.history_renderer import _extract_response_text
-    big = "x" * (60 * 1024)
-    entries = [{"type": "assistant_text", "ts": 1.0, "text": big}]
-    out = _extract_response_text(entries)
-    assert len(out) <= 50 * 1024
+def test_build_turn_cards_empty_when_no_turns():
+    from lib.history_renderer import _build_turn_cards
+    assert _build_turn_cards({}, [], ended_at=0.0) == []
+    assert _build_turn_cards({"turns": []}, [{"type": "thinking", "ts": 1.0, "text": "x"}], ended_at=2.0) == []
+
+
+def test_build_turn_cards_caps_tool_result_content():
+    from lib.history_renderer import _build_turn_cards
+    big = "y" * (60 * 1024)
+    summary = {"turns": [{"model": "claude-opus-4-7", "started_at": 1.0,
+                          "input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                          "cache_read_tokens": 0, "tools_used": []}]}
+    transcript = [{"type": "tool_result", "ts": 1.5, "content": big, "is_error": False}]
+    cards = _build_turn_cards(summary, transcript, ended_at=2.0)
+    assert len(cards[0]["tool_result"]["content"]) <= 50 * 1024
+
+
+def test_flatten_entry_includes_turns_array():
+    from lib.history_renderer import _flatten_entry
+    summary = {
+        "total_cost": 0.05, "total_input_tokens": 10, "total_output_tokens": 5,
+        "cache_hit_rate": 0.9, "total_elapsed": 5.0,
+        "turns": [{"model": "claude-opus-4-7", "started_at": 1.0,
+                   "input_tokens": 1, "output_tokens": 1,
+                   "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                   "cache_read_tokens": 0, "tools_used": []}],
+    }
+    f = _flatten_entry(_entry(summary=summary))
+    assert isinstance(f["turns"], list)
+    assert len(f["turns"]) == 1
+    assert f["turns"][0]["n"] == 1
 
 
 def test_render_includes_meta_block_with_version():

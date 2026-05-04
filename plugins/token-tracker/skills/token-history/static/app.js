@@ -47,7 +47,8 @@
     session: 'all',
     sortKey: 'time',
     sortDir: 'desc',
-    expanded: new Set()
+    expanded: new Set(),
+    expandedTurns: new Map() // rowN -> Set of turn n
   };
 
   // ---------- counts ----------
@@ -102,6 +103,11 @@
   const fmtToks = n => n.toLocaleString('en-US');
   const fmtPct = p => Math.round(p * 100) + '%';
   const fmtSec = s => s.toFixed(1) + 's';
+  const formatK = n => {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  };
 
   // ---------- render ----------
   function getRows(){
@@ -191,23 +197,160 @@
       tbody.appendChild(tr);
 
       if (isExp) {
+        const turns = Array.isArray(r.turns) ? r.turns : [];
+        const expandedSet = state.expandedTurns.get(r.n) || new Set();
+        state.expandedTurns.set(r.n, expandedSet);
+        const totalToolCalls = turns.reduce((s, t) => s + (t.tools ? t.tools.reduce((a, x) => a + (x.count || 1), 0) : 0), 0);
+        const turnsTotalCost = turns.reduce((s, t) => s + t.cost, 0);
+        const maxTurnCost = turns.length ? Math.max(...turns.map(t => t.cost)) : 0;
+
         const er = document.createElement('tr');
         er.className = 'expand-row';
-        const cap = (s) => (s || '').slice(0, 50 * 1024);
-        er.innerHTML = `
-          <td colspan="10">
-            <div class="expand-inner">
-              <div class="expand-block">
-                <div class="label">${escape(t('userPrompt'))}</div>
-                <div class="body">${escape(cap(r.prompt))}</div>
-              </div>
-              <div class="expand-block">
-                <div class="label">${escape(t('aiResponse'))}</div>
-                <div class="body">${escape(cap(r.response || ''))}</div>
-              </div>
-            </div>
-          </td>
+        const td = document.createElement('td');
+        td.colSpan = 10;
+        const inner = document.createElement('div');
+        inner.className = 'expand-inner';
+
+        const toolbar = document.createElement('div');
+        toolbar.className = 'turns-toolbar';
+        toolbar.innerHTML = `
+          <span class="meta">${t('turnsHeader', {
+            n: '<strong>' + turns.length + '</strong>',
+            cost: '<strong>' + fmtCost(turnsTotalCost) + '</strong>',
+            tools: '<strong>' + totalToolCalls + '</strong>'
+          })}</span>
+          <span class="actions">
+            <button type="button" data-act="expand-all">${escape(t('expandAll'))}</button>
+            <button type="button" data-act="collapse-all">${escape(t('collapseAll'))}</button>
+          </span>
         `;
+        toolbar.addEventListener('click', e => {
+          const act = e.target.closest('button')?.dataset.act;
+          if (!act) return;
+          e.stopPropagation();
+          if (act === 'expand-all') turns.forEach(tn => expandedSet.add(tn.n));
+          else expandedSet.clear();
+          render();
+        });
+        inner.appendChild(toolbar);
+
+        const headBar = document.createElement('div');
+        headBar.className = 'turn-head-bar';
+        headBar.innerHTML = `
+          <span class="col th-n">#</span>
+          <span class="col th-model">model</span>
+          <span class="col th-tools">${escape(t('turnColTools'))}</span>
+          <span class="col th-request">request</span>
+          <span class="col th-cost">cost</span>
+          <span class="col th-input">${escape(t('turnColInput'))}</span>
+          <span class="col th-cc">${escape(t('turnColCC'))}</span>
+          <span class="col th-cr">${escape(t('turnColCR'))}</span>
+          <span class="col th-output">${escape(t('turnColOutput'))}</span>
+          <span class="col th-elapsed">elapsed</span>
+          <span class="col th-chev"></span>
+        `;
+        inner.appendChild(headBar);
+
+        const list = document.createElement('div');
+        list.className = 'turn-list';
+
+        turns.forEach(tn => {
+          const tnExp = expandedSet.has(tn.n);
+          const isHotTurn = tn.cost >= maxTurnCost * 0.6 && turns.length > 1;
+          const ccPct = tn.cr > 0 ? tn.cc / tn.cr : 1;
+          const ccClassT = ccPct >= 0.9 ? '' : (ccPct >= 0.75 ? 'is-warn' : 'is-bad');
+          const toolsHtml = (tn.tools && tn.tools.length)
+            ? tn.tools.map(x => `<span class="tool-pill">${escape(x.name)}${x.count > 1 ? '×' + x.count : ''}</span>`).join('')
+            : `<span class="none">${escape(t('noTools'))}</span>`;
+          const requestPreview = (() => {
+            if (tn.tool_call && tn.tool_call.input) {
+              const input = tn.tool_call.input;
+              const keys = Object.keys(input);
+              if (keys.length > 0) {
+                const k = keys[0];
+                let v = input[k];
+                if (v === null) v = 'null';
+                else if (typeof v === 'object') v = JSON.stringify(v);
+                else v = String(v);
+                if (v.length > 18) v = v.slice(0, 17) + '…';
+                return `<code>${escape(k)}: ${escape(v)}</code>`;
+              }
+            }
+            const fallback = (tn.assistant_text || tn.thinking || '').trim();
+            if (fallback) {
+              const oneLine = fallback.replace(/\s+/g, ' ');
+              const clipped = oneLine.length > 28 ? oneLine.slice(0, 27) + '…' : oneLine;
+              return `<span class="text-prev">${escape(clipped)}</span>`;
+            }
+            return `<span class="none">—</span>`;
+          })();
+
+          const card = document.createElement('div');
+          card.className = 'turn-card' + (tnExp ? ' expanded' : '') + (isHotTurn ? ' is-hot' : '');
+          card.innerHTML = `
+            <span class="accent"></span>
+            <div class="turn-head" tabindex="0" role="button" aria-expanded="${tnExp}">
+              <span class="col th-n">${tn.n}</span>
+              <span class="col th-model">${escape(tn.model)}</span>
+              <span class="col th-tools">${toolsHtml}</span>
+              <span class="col th-request">${requestPreview}</span>
+              <span class="col th-cost ${isHotTurn ? 'is-hot' : ''}">${fmtCost(tn.cost)}</span>
+              <span class="col th-input">${fmtToks(tn.input)}</span>
+              <span class="col th-cc ${ccClassT}">${fmtToks(tn.cc)}</span>
+              <span class="col th-cr">${formatK(tn.cr)}</span>
+              <span class="col th-output">${fmtToks(tn.output)}</span>
+              <span class="col th-elapsed">${fmtSec(tn.elapsed)}</span>
+              <span class="col th-chev">${tnExp ? '▾' : '▸'}</span>
+            </div>
+          `;
+          if (tnExp) {
+            const body = document.createElement('div');
+            body.className = 'turn-body';
+            const cap = (s) => (s || '').slice(0, 50 * 1024);
+            const sections = [];
+            if (tn.thinking) sections.push(`
+              <div class="turn-section thinking">
+                <div class="label">${escape(t('thinking'))}</div>
+                <div class="body">${escape(cap(tn.thinking))}</div>
+              </div>`);
+            if (tn.assistant_text) sections.push(`
+              <div class="turn-section assistant">
+                <div class="label">${escape(t('assistantText'))}</div>
+                <div class="body">${escape(cap(tn.assistant_text))}</div>
+              </div>`);
+            if (tn.tool_call) sections.push(`
+              <div class="turn-section tool-call">
+                <div class="label">${escape(t('toolCall'))} · ${escape(tn.tool_call.name || '')}</div>
+                <div class="body">${escape(JSON.stringify(tn.tool_call.input || {}, null, 2))}</div>
+              </div>`);
+            if (tn.tool_result) sections.push(`
+              <div class="turn-section tool-result ${tn.tool_result.is_error ? 'is-error' : ''}">
+                <div class="label">${escape(t('toolResult'))}${tn.tool_result.is_error ? ' <span class="err">' + escape(t('errorBadge')) + '</span>' : ''}</div>
+                <div class="body">${escape(cap(tn.tool_result.content || ''))}</div>
+              </div>`);
+            if (sections.length === 0) sections.push(`
+              <div class="turn-section">
+                <div class="body" style="color:var(--fg-muted);font-style:italic">${escape(t('noContent'))}</div>
+              </div>`);
+            body.innerHTML = sections.join('');
+            card.appendChild(body);
+          }
+          const headEl = card.querySelector('.turn-head');
+          const onToggle = () => {
+            if (expandedSet.has(tn.n)) expandedSet.delete(tn.n);
+            else expandedSet.add(tn.n);
+            render();
+          };
+          headEl.addEventListener('click', onToggle);
+          headEl.addEventListener('keydown', ev => {
+            if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onToggle(); }
+          });
+          list.appendChild(card);
+        });
+
+        inner.appendChild(list);
+        td.appendChild(inner);
+        er.appendChild(td);
         tbody.appendChild(er);
       }
     });
