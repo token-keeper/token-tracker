@@ -2,6 +2,29 @@ from __future__ import annotations
 import json
 
 
+def _entry(**overrides):
+    base = {
+        "prompt_id": "p_1",
+        "session_id": "1f4c5def-abc",
+        "user_prompt": {"text": "hi", "ts": 1.0},
+        "started_at": 1.0,
+        "ended_at": 2.0,
+        "summary": {
+            "total_cost": 0.01,
+            "total_input_tokens": 100,
+            "total_output_tokens": 20,
+            "cache_hit_rate": 0.85,
+            "total_elapsed": 1.5,
+            "turns": [],
+        },
+        "models_used": ["claude-opus-4-7"],
+        "has_subagent_other_model": False,
+        "transcript_entries": [],
+    }
+    base.update(overrides)
+    return base
+
+
 def test_render_empty_data_includes_empty_message():
     from lib.history_renderer import render_history_html
     html = render_history_html(current=[], all_sessions=[], lang="ko")
@@ -10,16 +33,7 @@ def test_render_empty_data_includes_empty_message():
 
 def test_render_inlines_data_current_and_data_all():
     from lib.history_renderer import render_history_html
-    sample = [{"prompt_id": "p_1", "session_id": "s",
-               "user_prompt": {"text": "hi", "ts": 1.0},
-               "started_at": 1.0, "ended_at": 2.0,
-               "summary": {"total_cost": 0.01, "total_input_tokens": 1,
-                           "total_output_tokens": 1, "cache_hit_rate": 0.0,
-                           "total_elapsed": 1.0, "turns": []},
-               "models_used": ["claude-opus-4-7"],
-               "has_subagent_other_model": False,
-               "transcript_entries": []}]
-    html = render_history_html(current=sample, all_sessions=sample, lang="ko")
+    html = render_history_html(current=[_entry()], all_sessions=[_entry()], lang="ko")
     assert html.count('id="data-current"') == 1
     assert html.count('id="data-all"') == 1
     assert html.count('"p_1"') >= 2
@@ -28,14 +42,7 @@ def test_render_inlines_data_current_and_data_all():
 def test_render_escapes_script_tag_in_user_prompt():
     """JSON inlined in <script> must not break out via </script>."""
     from lib.history_renderer import render_history_html
-    payload = [{"prompt_id": "p", "session_id": "s",
-                "user_prompt": {"text": "</script><script>alert(1)</script>", "ts": 1.0},
-                "started_at": 1.0, "ended_at": 2.0,
-                "summary": {"total_cost": 0, "total_input_tokens": 0,
-                            "total_output_tokens": 0, "cache_hit_rate": 0,
-                            "total_elapsed": 0, "turns": []},
-                "models_used": [], "has_subagent_other_model": False,
-                "transcript_entries": []}]
+    payload = [_entry(user_prompt={"text": "</script><script>alert(1)</script>", "ts": 1.0})]
     html = render_history_html(current=payload, all_sessions=[], lang="ko")
     assert "</script><script>alert(1)</script>" not in html
 
@@ -52,14 +59,103 @@ def test_render_escapes_script_data_double_escaped_breakout():
     """`<!--<script>...</script><script>` triggers HTML5 script-data-double-escaped
     state where normal `</` escape is neutralized. Verify `<!--` is also escaped."""
     from lib.history_renderer import render_history_html
-    payload = [{"prompt_id": "p", "session_id": "s",
-                "user_prompt": {"text": "<!--<script>alert(1)</script><script>", "ts": 1.0},
-                "started_at": 1.0, "ended_at": 2.0,
-                "summary": {"total_cost": 0, "total_input_tokens": 0,
-                            "total_output_tokens": 0, "cache_hit_rate": 0,
-                            "total_elapsed": 0, "turns": []},
-                "models_used": [], "has_subagent_other_model": False,
-                "transcript_entries": []}]
+    payload = [_entry(user_prompt={"text": "<!--<script>alert(1)</script><script>", "ts": 1.0})]
     html = render_history_html(current=payload, all_sessions=[], lang="ko")
-    # Raw `<!--<script>` must be escaped
     assert "<!--<script>" not in html
+
+
+def _extract_inline_payload(html: str, script_id: str) -> str:
+    """Pull the textContent of <script id="..."> from rendered HTML."""
+    import re
+    m = re.search(
+        rf'<script[^>]*id="{re.escape(script_id)}"[^>]*>(.*?)</script>',
+        html, re.DOTALL,
+    )
+    assert m, f"no <script id={script_id!r}> in html"
+    return m.group(1)
+
+
+def test_inline_payload_is_valid_json_with_html_comment():
+    """Regression: data containing `<!--` must yield JSON.parse-able payload.
+    Earlier `<\\!--` escape produced invalid JSON `\\!` and broke the page."""
+    from lib.history_renderer import render_history_html
+    payload = [_entry(user_prompt={"text": "before <!-- mid --> after", "ts": 1.0})]
+    html = render_history_html(current=payload, all_sessions=payload, lang="ko")
+    for sid in ("data-current", "data-all"):
+        body = _extract_inline_payload(html, sid)
+        decoded = json.loads(body)
+        assert decoded[0]["prompt"] == "before <!-- mid --> after"
+
+
+def test_inline_payload_safe_against_placeholder_collision():
+    """Regression: data containing a literal placeholder token (e.g.
+    `__DATA_ALL__`) must not be re-substituted into the previous payload."""
+    from lib.history_renderer import render_history_html
+    poison = "lib/history_renderer.py:90:        \"__DATA_ALL__\": _safe_json_for_script(all_sessions)"
+    payload = [_entry(prompt_id="p", user_prompt={"text": poison, "ts": 1.0})]
+    other = [_entry(prompt_id="q", session_id="s2", user_prompt={"text": "other", "ts": 1.0})]
+    html = render_history_html(current=payload, all_sessions=other, lang="ko")
+    body = _extract_inline_payload(html, "data-current")
+    decoded = json.loads(body)
+    assert decoded[0]["prompt"] == poison
+
+
+def test_inline_payload_is_valid_json_with_script_close():
+    """`</script>` in data must not break inline payload — JSON.parse-able."""
+    from lib.history_renderer import render_history_html
+    payload = [_entry(user_prompt={"text": "x </script><script>y", "ts": 1.0})]
+    html = render_history_html(current=payload, all_sessions=[], lang="ko")
+    body = _extract_inline_payload(html, "data-current")
+    decoded = json.loads(body)
+    assert decoded[0]["prompt"] == "x </script><script>y"
+
+
+def test_flatten_entry_maps_to_design_schema():
+    from lib.history_renderer import _flatten_entry
+    f = _flatten_entry(_entry(prompt_id="p_X", session_id="abcdef12-rest"))
+    assert f["n"] == "p_X"
+    assert f["prompt"] == "hi"
+    assert f["model"] == "opus 4.7"
+    assert f["session"] == "abcdef12"
+    assert f["cost"] == 0.01
+    assert f["in"] == 100
+    assert f["out"] == 20
+    assert f["cache"] == 0.85
+    assert f["elapsed"] == 1.5
+    assert "timeLabel" in f and isinstance(f["timeLabel"], str)
+    assert isinstance(f["time"], float)
+
+
+def test_flatten_entry_handles_empty_models():
+    from lib.history_renderer import _flatten_entry
+    f = _flatten_entry(_entry(models_used=[]))
+    assert f["model"] == ""
+
+
+def test_extract_response_concatenates_assistant_text():
+    from lib.history_renderer import _extract_response_text
+    entries = [
+        {"type": "thinking", "ts": 1.0, "text": "internal"},
+        {"type": "assistant_text", "ts": 2.0, "text": "first"},
+        {"type": "tool_call", "ts": 3.0, "name": "Read"},
+        {"type": "assistant_text", "ts": 4.0, "text": "second"},
+    ]
+    out = _extract_response_text(entries)
+    assert out == "first\n\nsecond"
+
+
+def test_extract_response_caps_at_50kb():
+    from lib.history_renderer import _extract_response_text
+    big = "x" * (60 * 1024)
+    entries = [{"type": "assistant_text", "ts": 1.0, "text": big}]
+    out = _extract_response_text(entries)
+    assert len(out) <= 50 * 1024
+
+
+def test_render_includes_meta_block_with_version():
+    from lib.history_renderer import render_history_html
+    html = render_history_html(current=[], all_sessions=[], lang="ko")
+    assert 'id="meta"' in html
+    body = _extract_inline_payload(html, "meta")
+    decoded = json.loads(body)
+    assert "ts" in decoded and "ver" in decoded

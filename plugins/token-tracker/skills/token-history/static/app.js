@@ -1,325 +1,228 @@
-(function () {
+(function(){
+  'use strict';
+
+  // ---------- i18n ----------
+  const I18N = JSON.parse(document.getElementById('i18n').textContent);
+  const LANG = (navigator.language || 'ko').toLowerCase().startsWith('en') ? 'en' : 'ko';
+  const t = (path, vars) => {
+    const v = path.split('.').reduce((o, k) => (o ? o[k] : undefined), I18N[LANG]) ?? path;
+    if (!vars) return v;
+    return v.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
+  };
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+
+  // ---------- data ----------
   const dataCurrent = JSON.parse(document.getElementById('data-current').textContent);
   const dataAll = JSON.parse(document.getElementById('data-all').textContent);
-  const i18n = JSON.parse(document.getElementById('i18n').textContent);
+  const META = JSON.parse(document.getElementById('meta').textContent);
 
-  const COLUMNS = [
-    { key: 'index',    label: i18n.col_history_index,    sortable: true },
-    { key: 'time',     label: i18n.col_history_time,     sortable: true },
-    { key: 'prompt',   label: i18n.col_history_prompt,   sortable: false },
-    { key: 'model',    label: i18n.col_history_model,    sortable: true },
-    { key: 'cost',     label: i18n.col_history_cost,     sortable: true },
-    { key: 'in',       label: i18n.col_history_in,       sortable: true },
-    { key: 'out',      label: i18n.col_history_out,      sortable: true },
-    { key: 'cc',       label: i18n.col_history_cc,       sortable: true },
-    { key: 'elapsed',  label: i18n.col_history_elapsed,  sortable: true },
-  ];
-  const SESSION_COL = { key: 'session', label: i18n.col_history_session, sortable: true };
+  // ---------- header ----------
+  document.getElementById('page-title').textContent = t('title');
+  document.getElementById('page-sub').innerHTML = t('subtitleFmt', { ts: escape(META.ts), ver: escape(META.ver) })
+    .replace(/·/g, '<span class="dot">·</span>');
 
+  // ---------- theme ----------
+  const themeBtns = document.querySelectorAll('[data-theme-btn]');
+  document.getElementById('t-light').textContent = t('themeLight');
+  document.getElementById('t-auto').textContent = t('themeAuto');
+  document.getElementById('t-dark').textContent = t('themeDark');
+  function applyTheme(mode){
+    if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', mode);
+    themeBtns.forEach(b => b.setAttribute('aria-pressed', b.dataset.themeBtn === mode ? 'true' : 'false'));
+    try { localStorage.setItem('tt-theme', mode); } catch(_){}
+  }
+  themeBtns.forEach(b => b.addEventListener('click', () => applyTheme(b.dataset.themeBtn)));
+  let initTheme = 'auto';
+  try { initTheme = localStorage.getItem('tt-theme') || 'auto'; } catch(_){}
+  applyTheme(initTheme);
+
+  // ---------- state ----------
   const state = {
     tab: 'current',
+    q: '',
+    model: 'all',
+    session: 'all',
     sortKey: 'time',
-    sortDir: -1,  // most recent first
-    search: '',
-    model: '',
-    session: '',
-    expanded: new Set(),
+    sortDir: 'desc',
+    expanded: new Set()
   };
 
-  function shortModel(rawId) {
-    if (!rawId) return '';
-    const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(rawId);
-    return m ? `${m[1]} ${m[2]}.${m[3]}` : rawId;
-  }
+  // ---------- counts ----------
+  document.getElementById('count-current').textContent = dataCurrent.length;
+  document.getElementById('count-all').textContent = dataAll.length;
 
-  function modelDisplay(entry) {
-    const primary = entry.models_used && entry.models_used[0]
-      ? shortModel(entry.models_used[0]) : '';
-    return entry.has_subagent_other_model ? primary + '+ⓢ' : primary;
+  // ---------- filter dropdowns ----------
+  function uniq(arr, key){ return [...new Set(arr.map(r => r[key]))]; }
+  function fillSelect(sel, options, allLabel){
+    sel.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = allLabel;
+    sel.appendChild(allOpt);
+    options.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o; opt.textContent = o;
+      sel.appendChild(opt);
+    });
   }
+  const allRows = [...dataCurrent, ...dataAll];
+  fillSelect(document.getElementById('model'), uniq(allRows, 'model'), t('modelAll'));
+  fillSelect(document.getElementById('session'), uniq(dataAll, 'session'), t('sessionAll'));
 
-  function dataset() {
-    return state.tab === 'current' ? dataCurrent : dataAll;
-  }
+  // ---------- listeners ----------
+  document.getElementById('q').placeholder = t('search');
+  document.getElementById('q').addEventListener('input', e => { state.q = e.target.value; render(); });
+  document.getElementById('model').addEventListener('change', e => { state.model = e.target.value; render(); });
+  document.getElementById('session').addEventListener('change', e => { state.session = e.target.value; render(); });
 
-  function filtered() {
-    const q = state.search.toLowerCase();
-    return dataset().filter(e => {
-      if (q && !(e.user_prompt && (e.user_prompt.text || '').toLowerCase().includes(q))) return false;
-      if (state.model && (!e.models_used || e.models_used[0] !== state.model)) return false;
-      if (state.tab === 'all' && state.session && e.session_id !== state.session) return false;
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.tab = btn.dataset.tab;
+      document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
+      document.getElementById('session').style.display = state.tab === 'all' ? '' : 'none';
+      render();
+    });
+  });
+
+  document.querySelectorAll('thead th[data-key]').forEach(th => {
+    const btn = th.querySelector('button');
+    btn.addEventListener('click', () => {
+      const k = th.dataset.key;
+      if (state.sortKey === k) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      else { state.sortKey = k; state.sortDir = (k === 'time' || k === 'cost' || k === 'in' || k === 'out' || k === 'elapsed') ? 'desc' : 'asc'; }
+      render();
+    });
+  });
+
+  // ---------- format helpers ----------
+  const fmtCost = c => '$' + c.toFixed(4);
+  const fmtToks = n => n.toLocaleString('en-US');
+  const fmtPct = p => Math.round(p * 100) + '%';
+  const fmtSec = s => s.toFixed(1) + 's';
+
+  // ---------- render ----------
+  function getRows(){
+    const src = state.tab === 'current' ? dataCurrent : dataAll;
+    const q = state.q.trim().toLowerCase();
+    let rows = src.filter(r => {
+      if (q && !r.prompt.toLowerCase().includes(q)) return false;
+      if (state.model !== 'all' && r.model !== state.model) return false;
+      if (state.tab === 'all' && state.session !== 'all' && r.session !== state.session) return false;
       return true;
     });
-  }
-
-  function rowValue(e, key) {
-    switch (key) {
-      case 'time': return e.started_at || 0;
-      case 'model': return modelDisplay(e);
-      case 'cost': return e.summary?.total_cost ?? 0;
-      case 'in': return e.summary?.total_input_tokens ?? 0;
-      case 'out': return e.summary?.total_output_tokens ?? 0;
-      case 'cc': return e.summary?.cache_hit_rate ?? 0;
-      case 'elapsed': return e.summary?.total_elapsed ?? 0;
-      case 'session': return e.session_id || '';
-      case 'index':
-      default: return 0;
-    }
-  }
-
-  function sorted(rows) {
-    if (state.sortKey === 'index') return rows;
-    const dir = state.sortDir;
-    return [...rows].sort((a, b) => {
-      const av = rowValue(a, state.sortKey);
-      const bv = rowValue(b, state.sortKey);
-      if (av < bv) return -1 * dir;
-      if (av > bv) return 1 * dir;
-      return 0;
+    const k = state.sortKey, dir = state.sortDir === 'asc' ? 1 : -1;
+    rows = [...rows].sort((a, b) => {
+      const av = a[k], bv = b[k];
+      if (typeof av === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
     });
+    return rows;
   }
 
-  function fmtTime(ts) {
-    return new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-  }
+  function render(){
+    document.querySelectorAll('thead th[data-key]').forEach(th => {
+      const isActive = th.dataset.key === state.sortKey;
+      th.setAttribute('aria-sort', isActive ? (state.sortDir === 'asc' ? 'ascending' : 'descending') : 'none');
+      const ind = th.querySelector('.sort-ind');
+      ind.textContent = isActive ? (state.sortDir === 'asc' ? '▲' : '▼') : '·';
+    });
 
-  function fmtCost(c) { return '$' + (c || 0).toFixed(4); }
-  function fmtNum(n) { return Number(n || 0).toLocaleString(); }
-  function fmtPct(p) { return Math.round((p || 0) * 100) + '%'; }
-  function fmtElapsed(s) { return (s || 0).toFixed(1) + 's'; }
+    const rows = getRows();
+    const tbody = document.getElementById('tbody');
+    tbody.innerHTML = '';
 
-  function renderTotals(rows) {
-    const t = rows.reduce((acc, e) => {
-      const s = e.summary || {};
-      acc.cost += s.total_cost || 0;
-      acc.in += s.total_input_tokens || 0;
-      acc.out += s.total_output_tokens || 0;
-      acc.elapsed += s.total_elapsed || 0;
-      const inp = (s.total_input_tokens || 0);
-      acc.cacheNum += (s.cache_hit_rate || 0) * inp;
-      acc.cacheDen += inp;
-      return acc;
-    }, {cost:0, in:0, out:0, elapsed:0, cacheNum:0, cacheDen:0});
-    const cachePct = t.cacheDen > 0 ? (t.cacheNum / t.cacheDen) : 0;
-    document.getElementById('totals').textContent =
-      `${i18n.total_label}  ${fmtCost(t.cost)} · ${fmtNum(t.in + t.out)} toks · ${fmtPct(cachePct)} cache · ${fmtElapsed(t.elapsed)}`;
-  }
+    const totalCost = rows.reduce((s, r) => s + r.cost, 0);
+    const totalToks = rows.reduce((s, r) => s + r.in + r.out, 0);
+    const totalIn = rows.reduce((s, r) => s + r.in, 0);
+    const weightedCache = totalIn ? rows.reduce((s, r) => s + r.cache * r.in, 0) / totalIn : 0;
+    const totalElapsed = rows.reduce((s, r) => s + r.elapsed, 0);
+    document.getElementById('summary-line').innerHTML =
+      t('summaryFmt', {
+        cost: '<strong>' + fmtCost(totalCost) + '</strong>',
+        toks: '<strong>' + fmtToks(totalToks) + '</strong>',
+        cache: '<strong>' + fmtPct(weightedCache) + '</strong>',
+        elapsed: '<strong>' + fmtSec(totalElapsed) + '</strong>'
+      });
+    document.getElementById('rows-count').textContent = t('rowsFmt', { n: rows.length });
 
-  function renderTable(rows) {
-    const cols = state.tab === 'all' ? [...COLUMNS, SESSION_COL] : COLUMNS;
-    const host = document.getElementById('table-host');
-    host.innerHTML = '';
-    if (!rows.length) {
-      document.getElementById('empty').hidden = false;
+    if (rows.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="10" class="empty">' + escape(t('empty')) + '</td>';
+      tbody.appendChild(tr);
       return;
     }
-    document.getElementById('empty').hidden = true;
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    const tr = document.createElement('tr');
-    cols.forEach(c => {
-      const th = document.createElement('th');
-      th.textContent = c.label + (state.sortKey === c.key ? (state.sortDir > 0 ? ' ▲' : ' ▼') : '');
-      if (c.sortable) {
-        th.style.cursor = 'pointer';
-        th.onclick = () => {
-          if (state.sortKey === c.key) state.sortDir *= -1;
-          else { state.sortKey = c.key; state.sortDir = c.key === 'time' ? -1 : 1; }
-          render();
-        };
-      }
-      tr.appendChild(th);
-    });
-    thead.appendChild(tr);
-    table.appendChild(thead);
 
-    const tbody = document.createElement('tbody');
-    rows.forEach((e, i) => {
-      const row = document.createElement('tr');
-      row.dataset.promptId = e.prompt_id;
-      const cells = {
-        index: i + 1,
-        time: fmtTime(e.started_at || 0),
-        prompt: (e.user_prompt && e.user_prompt.text) || '',
-        model: modelDisplay(e),
-        cost: fmtCost(e.summary?.total_cost),
-        in: fmtNum(e.summary?.total_input_tokens),
-        out: fmtNum(e.summary?.total_output_tokens),
-        cc: fmtPct(e.summary?.cache_hit_rate),
-        elapsed: fmtElapsed(e.summary?.total_elapsed),
-        session: (e.session_id || '').slice(0, 8),
-      };
-      cols.forEach(c => {
-        const td = document.createElement('td');
-        const val = cells[c.key];
-        if (c.key === 'prompt') {
-          td.title = val;
-          td.style.maxWidth = '40ch';
-          td.style.overflow = 'hidden';
-          td.style.textOverflow = 'ellipsis';
-          td.style.whiteSpace = 'nowrap';
-        }
-        td.textContent = val;
-        row.appendChild(td);
+    const maxCost = Math.max(...rows.map(r => r.cost));
+
+    rows.forEach((r, i) => {
+      const isExp = state.expanded.has(r.n);
+      const ccClass = r.cache >= 0.9 ? '' : (r.cache >= 0.75 ? 'is-cc-warn' : 'is-cc-bad');
+      const isHot = r.cost >= maxCost * 0.6 && rows.length > 1;
+      const costPct = Math.max(4, Math.round((r.cost / maxCost) * 100));
+
+      const tr = document.createElement('tr');
+      tr.className = 'row' + (isExp ? ' expanded' : '');
+      tr.tabIndex = 0;
+      tr.dataset.n = r.n;
+      tr.innerHTML = `
+        <td class="c-n">${i + 1}</td>
+        <td class="c-time">${escape(r.timeLabel)}</td>
+        <td class="c-prompt"><span class="prompt-text" title="${escapeAttr(r.prompt)}">${escape(r.prompt)}</span></td>
+        <td class="c-model"><span class="pill">${escape(r.model)}</span></td>
+        <td class="c-cost ${isHot ? 'is-hot' : ''}">
+          <div class="cost-cell">
+            <span class="cost-bar"><span style="width:${costPct}%"></span></span>
+            <span class="cost-num">${fmtCost(r.cost)}</span>
+          </div>
+        </td>
+        <td class="c-in">${fmtToks(r.in)}</td>
+        <td class="c-out">${fmtToks(r.out)}</td>
+        <td class="c-cc ${ccClass}"><span class="cc-cell"><span class="cc-dot"></span><span class="cc-num">${fmtPct(r.cache)}</span></span></td>
+        <td class="c-elapsed">${fmtSec(r.elapsed)}</td>
+        <td class="c-chev">${isExp ? '▾' : '▸'}</td>
+      `;
+      tr.addEventListener('click', () => toggle(r.n));
+      tr.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(r.n); }
       });
-      row.style.cursor = 'pointer';
-      row.onclick = () => toggleExpand(e.prompt_id);
-      tbody.appendChild(row);
+      tbody.appendChild(tr);
 
-      if (state.expanded.has(e.prompt_id)) {
-        const expandRow = document.createElement('tr');
-        const expandCell = document.createElement('td');
-        expandCell.colSpan = cols.length;
-        expandCell.className = 'row-expand';
-        expandCell.appendChild(renderExpand(e));
-        expandRow.appendChild(expandCell);
-        tbody.appendChild(expandRow);
+      if (isExp) {
+        const er = document.createElement('tr');
+        er.className = 'expand-row';
+        const cap = (s) => (s || '').slice(0, 50 * 1024);
+        er.innerHTML = `
+          <td colspan="10">
+            <div class="expand-inner">
+              <div class="expand-block">
+                <div class="label">${escape(t('userPrompt'))}</div>
+                <div class="body">${escape(cap(r.prompt))}</div>
+              </div>
+              <div class="expand-block">
+                <div class="label">${escape(t('aiResponse'))}</div>
+                <div class="body">${escape(cap(r.response || ''))}</div>
+              </div>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(er);
       }
     });
-    table.appendChild(tbody);
-    host.appendChild(table);
   }
 
-  function isLong(text) {
-    if (!text) return false;
-    return text.length > 500 || text.split('\n').length > 5;
-  }
-
-  function makePre(text) {
-    const wrap = document.createElement('div');
-    const pre = document.createElement('pre');
-    if (isLong(text)) {
-      pre.classList.add('long');
-      wrap.classList.add('collapsed');
-      const toggle = document.createElement('button');
-      toggle.textContent = i18n.expand_show_full;
-      toggle.onclick = (ev) => {
-        ev.stopPropagation();
-        const collapsed = wrap.classList.toggle('collapsed');
-        toggle.textContent = collapsed ? i18n.expand_show_full : i18n.expand_collapse;
-      };
-      wrap.appendChild(pre);
-      wrap.appendChild(toggle);
-    } else {
-      wrap.appendChild(pre);
-    }
-    pre.textContent = text;
-    return wrap;
-  }
-
-  function renderExpand(e) {
-    const root = document.createElement('div');
-    const userSection = document.createElement('section');
-    const userH = document.createElement('h4');
-    userH.textContent = i18n.expand_user_prompt;
-    userSection.appendChild(userH);
-    userSection.appendChild(makePre((e.user_prompt && e.user_prompt.text) || ''));
-    root.appendChild(userSection);
-
-    const ai = (e.transcript_entries || []).filter(x => x.type === 'assistant_text').map(x => x.text).join('\n\n');
-    if (ai) {
-      const sec = document.createElement('section');
-      const h = document.createElement('h4'); h.textContent = i18n.expand_ai_response;
-      sec.appendChild(h); sec.appendChild(makePre(ai));
-      root.appendChild(sec);
-    }
-
-    const thinking = (e.transcript_entries || []).filter(x => x.type === 'thinking').map(x => x.text).join('\n\n');
-    if (thinking) {
-      const sec = document.createElement('section');
-      const h = document.createElement('h4'); h.textContent = i18n.expand_thinking;
-      sec.appendChild(h); sec.appendChild(makePre(thinking));
-      root.appendChild(sec);
-    }
-
-    const tools = (e.transcript_entries || []).filter(x => x.type === 'tool_call' || x.type === 'tool_result');
-    if (tools.length) {
-      const sec = document.createElement('section');
-      const h = document.createElement('h4');
-      h.textContent = i18n.expand_tool_calls.replace('{n}', tools.length);
-      sec.appendChild(h);
-      const truncate = (s, n) => s.length > n ? s.slice(0, n) + ' …' : s;
-      tools.forEach(t => {
-        const li = document.createElement('div');
-        if (t.type === 'tool_call') {
-          li.textContent = `▸ ${t.name}: ${truncate(JSON.stringify(t.input), 200)}`;
-        } else {
-          li.textContent = `  ↳ result${t.is_error ? ' (error)' : ''}: ${truncate(t.content || '', 200)}`;
-        }
-        sec.appendChild(li);
-      });
-      root.appendChild(sec);
-    }
-
-    return root;
-  }
-
-  function toggleExpand(pid) {
-    if (state.expanded.has(pid)) state.expanded.delete(pid);
-    else state.expanded.add(pid);
+  function toggle(n){
+    if (state.expanded.has(n)) state.expanded.delete(n);
+    else state.expanded.add(n);
     render();
   }
 
-  function rebuildFilters() {
-    const ds = dataset();
-    const models = new Set();
-    const sessions = new Set();
-    ds.forEach(e => {
-      if (e.models_used && e.models_used[0]) models.add(e.models_used[0]);
-      if (e.session_id) sessions.add(e.session_id);
-    });
-
-    const modelSel = document.getElementById('filter-model');
-    modelSel.innerHTML = `<option value="">${i18n.filter_model_all}</option>`;
-    [...models].sort().forEach(m => {
-      const o = document.createElement('option');
-      o.value = m; o.textContent = shortModel(m);
-      modelSel.appendChild(o);
-    });
-    modelSel.value = state.model;
-
-    const sessionSel = document.getElementById('filter-session');
-    sessionSel.style.display = state.tab === 'all' ? '' : 'none';
-    sessionSel.innerHTML = `<option value="">${i18n.filter_session_all}</option>`;
-    [...sessions].sort().forEach(s => {
-      const o = document.createElement('option');
-      o.value = s; o.textContent = s.slice(0, 8);
-      sessionSel.appendChild(o);
-    });
-    sessionSel.value = state.session;
+  function escape(s){
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
-
-  function render() {
-    rebuildFilters();
-    const rows = sorted(filtered());
-    renderTotals(rows);
-    renderTable(rows);
-  }
-
-  // Wire events
-  document.querySelectorAll('nav.tabs button').forEach(b => {
-    b.onclick = () => {
-      state.tab = b.dataset.tab;
-      state.sortKey = 'time'; state.sortDir = -1;
-      state.search = ''; state.model = ''; state.session = '';
-      state.expanded.clear();
-      document.getElementById('search').value = '';
-      document.querySelectorAll('nav.tabs button').forEach(x => x.classList.toggle('active', x === b));
-      render();
-    };
-  });
-  document.getElementById('search').addEventListener('input', (ev) => {
-    state.search = ev.target.value;
-    render();
-  });
-  document.getElementById('filter-model').addEventListener('change', (ev) => {
-    state.model = ev.target.value;
-    render();
-  });
-  document.getElementById('filter-session').addEventListener('change', (ev) => {
-    state.session = ev.target.value;
-    render();
-  });
+  function escapeAttr(s){ return escape(s); }
 
   render();
 })();
