@@ -375,13 +375,12 @@ def parse_tool_result(entry: dict) -> list[dict]:
             if isinstance(raw, str):
                 text = raw
             elif isinstance(raw, list):
-                parts: list[str] = []
-                for sub in raw:
-                    if isinstance(sub, dict) and sub.get("type") == "text":
-                        t = sub.get("text")
-                        if isinstance(t, str):
-                            parts.append(t)
-                text = "\n".join(parts)
+                parts = [
+                    _normalize_tool_result_block(b)
+                    for b in raw
+                    if isinstance(b, dict)
+                ]
+                text = "\n".join(p for p in parts if p)
             else:
                 text = ""
             out.append({

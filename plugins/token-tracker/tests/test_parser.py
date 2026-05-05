@@ -862,6 +862,78 @@ def test_parse_tool_result_list_content():
     assert out[0]["is_error"] is True
 
 
+def test_parse_tool_result_list_with_tool_reference():
+    """MCP ToolSearch 같은 도구가 tool_reference block 을 반환할 때
+    placeholder 줄바꿈 리스트로 정규화된다 (v0.8.1 회귀 가드)."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_search_1",
+                    "content": [
+                        {"type": "tool_reference", "tool_name": "TaskCreate"},
+                        {"type": "tool_reference", "tool_name": "TaskUpdate"},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert len(out) == 1
+    assert out[0]["content"] == "[tool_reference] TaskCreate\n[tool_reference] TaskUpdate"
+
+
+def test_parse_tool_result_list_mixed_text_and_tool_reference():
+    """text + tool_reference 혼합 block 도 줄바꿈으로 join 된다."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_mixed_1",
+                    "content": [
+                        {"type": "text", "text": "intro"},
+                        {"type": "tool_reference", "tool_name": "Read"},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert out[0]["content"] == "intro\n[tool_reference] Read"
+
+
+def test_parse_tool_result_list_skips_blocks_without_type():
+    """type 키가 없는 block 은 join 결과에서 빠진다 (빈 줄 안 생김)."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_x",
+                    "content": [
+                        {"type": "text", "text": "a"},
+                        {},
+                        {"type": "text", "text": "b"},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert out[0]["content"] == "a\nb"
+
+
 # ---------------------------------------------------------------------------
 # parse_transcript_for_history
 # ---------------------------------------------------------------------------
