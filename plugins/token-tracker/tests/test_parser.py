@@ -752,6 +752,37 @@ def test_parse_thinking_returns_empty_when_none():
 
 
 # ---------------------------------------------------------------------------
+# _normalize_tool_result_block
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("block,expected", [
+    # text
+    ({"type": "text", "text": "hello"}, "hello"),
+    ({"type": "text", "text": ""}, ""),
+    ({"type": "text"}, ""),
+    # tool_reference (MCP ToolSearch 결과)
+    ({"type": "tool_reference", "tool_name": "TaskCreate"}, "[tool_reference] TaskCreate"),
+    ({"type": "tool_reference"}, "[tool_reference]"),
+    # image (Playwright screenshot 등)
+    (
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "A" * 1024}},
+        "[image: image/png, 768 bytes]",
+    ),
+    ({"type": "image", "source": {"media_type": "image/png"}}, "[image: image/png]"),
+    ({"type": "image", "source": {"data": "A" * 1024}}, "[image: 768 bytes]"),
+    ({"type": "image", "source": {}}, "[image]"),
+    ({"type": "image"}, "[image]"),
+    # unknown type 방어 placeholder
+    ({"type": "some_new_block", "x": 1}, "[some_new_block]"),
+    # type 키 누락 → skip
+    ({}, ""),
+])
+def test_normalize_tool_result_block(block, expected):
+    assert parser._normalize_tool_result_block(block) == expected
+
+
+# ---------------------------------------------------------------------------
 # parse_tool_call / parse_tool_result
 # ---------------------------------------------------------------------------
 
@@ -829,6 +860,104 @@ def test_parse_tool_result_list_content():
     assert len(out) == 1
     assert out[0]["content"] == "line1\nline2"
     assert out[0]["is_error"] is True
+
+
+def test_parse_tool_result_list_with_tool_reference():
+    """MCP ToolSearch 같은 도구가 tool_reference block 을 반환할 때
+    placeholder 줄바꿈 리스트로 정규화된다 (v0.8.1 회귀 가드)."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_search_1",
+                    "content": [
+                        {"type": "tool_reference", "tool_name": "TaskCreate"},
+                        {"type": "tool_reference", "tool_name": "TaskUpdate"},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert len(out) == 1
+    assert out[0]["content"] == "[tool_reference] TaskCreate\n[tool_reference] TaskUpdate"
+
+
+def test_parse_tool_result_list_with_image():
+    """image block 이 [image: ...] placeholder 로 정규화된다 (v0.8.1 회귀 가드).
+
+    Playwright browser_take_screenshot 같은 도구가 image block 을 반환할 때
+    parse_tool_result 가 빈 문자열로 떨어뜨리지 않음을 통합 레벨에서 가드."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_screenshot_1",
+                    "content": [
+                        {"type": "image", "source": {"media_type": "image/png"}},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert len(out) == 1
+    assert out[0]["content"] == "[image: image/png]"
+
+
+def test_parse_tool_result_list_mixed_text_and_tool_reference():
+    """text + tool_reference 혼합 block 도 줄바꿈으로 join 된다."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_mixed_1",
+                    "content": [
+                        {"type": "text", "text": "intro"},
+                        {"type": "tool_reference", "tool_name": "Read"},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert out[0]["content"] == "intro\n[tool_reference] Read"
+
+
+def test_parse_tool_result_list_skips_blocks_without_type():
+    """type 키가 없는 block 은 join 결과에서 빠진다 (빈 줄 안 생김)."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_x",
+                    "content": [
+                        {"type": "text", "text": "a"},
+                        {},
+                        {"type": "text", "text": "b"},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert out[0]["content"] == "a\nb"
 
 
 # ---------------------------------------------------------------------------

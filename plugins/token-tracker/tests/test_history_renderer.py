@@ -134,7 +134,7 @@ def test_flatten_entry_handles_empty_models():
 
 def test_build_turn_cards_basic_mapping_and_grouping():
     """Each turn N owns transcript entries in [turn[N].started_at,
-    turn[N+1].started_at). Verify thinking/assistant/tool_call/tool_result are
+    turn[N+1].started_at). Verify thinking/assistant/tool_pairs are
     routed correctly and turn-level token/cost fields populated."""
     from lib.history_renderer import _build_turn_cards
     summary = {
@@ -157,8 +157,8 @@ def test_build_turn_cards_basic_mapping_and_grouping():
     }
     transcript = [
         {"type": "thinking", "ts": 100.5, "text": "T1 thought"},
-        {"type": "tool_call", "ts": 100.7, "name": "Read", "input": {"path": "/x"}},
-        {"type": "tool_result", "ts": 100.9, "content": "ok", "is_error": False},
+        {"type": "tool_call", "ts": 100.7, "id": "tu_a", "name": "Read", "input": {"path": "/x"}},
+        {"type": "tool_result", "ts": 100.9, "tool_use_id": "tu_a", "content": "ok", "is_error": False},
         {"type": "assistant_text", "ts": 110.5, "text": "done"},
     ]
     cards = _build_turn_cards(summary, transcript, ended_at=115.0)
@@ -166,15 +166,17 @@ def test_build_turn_cards_basic_mapping_and_grouping():
     c1, c2 = cards
     assert c1["n"] == 1 and c1["model"] == "opus 4.7"
     assert c1["thinking"] == "T1 thought"
-    assert c1["tool_call"] == {"name": "Read", "input": {"path": "/x"}}
-    assert c1["tool_result"] == {"content": "ok", "is_error": False}
+    assert c1["tool_pairs"] == [
+        {"name": "Read", "input": {"path": "/x"}, "tool_use_id": "tu_a",
+         "content": "ok", "is_error": False, "has_result": True}
+    ]
     assert c1["assistant_text"] == ""
     assert c1["elapsed"] == 10.0  # 110 - 100
     assert c1["cost"] > 0
     assert c2["n"] == 2
     assert c2["assistant_text"] == "done"
     assert c2["thinking"] == ""
-    assert c2["tool_call"] is None
+    assert c2["tool_pairs"] == []
     assert c2["elapsed"] == 5.0  # ended_at(115) - started_at(110)
 
 
@@ -191,9 +193,78 @@ def test_build_turn_cards_caps_tool_result_content():
                           "input_tokens": 1, "output_tokens": 1,
                           "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
                           "cache_read_tokens": 0, "tools_used": []}]}
-    transcript = [{"type": "tool_result", "ts": 1.5, "content": big, "is_error": False}]
+    transcript = [
+        {"type": "tool_call", "ts": 1.4, "id": "tu_big", "name": "Bash", "input": {}},
+        {"type": "tool_result", "ts": 1.5, "tool_use_id": "tu_big", "content": big, "is_error": False},
+    ]
     cards = _build_turn_cards(summary, transcript, ended_at=2.0)
-    assert len(cards[0]["tool_result"]["content"]) <= 50 * 1024
+    assert len(cards[0]["tool_pairs"][0]["content"]) <= 50 * 1024
+
+
+def test_build_turn_cards_multi_tool_in_single_turn():
+    """한 turn 안의 parallel tool_call/tool_result 가 모두 tool_pairs 에 들어간다
+    (v0.8.1 회귀 가드 — 이전엔 첫 1쌍만 emit 됐음)."""
+    from lib.history_renderer import _build_turn_cards
+    summary = {
+        "turns": [
+            {
+                "model": "claude-opus-4-7", "started_at": 100.0,
+                "input_tokens": 5, "output_tokens": 50,
+                "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                "cache_read_tokens": 0,
+                "tools_used": [
+                    {"name": "Bash", "count": 1},
+                    {"name": "Read", "count": 1},
+                    {"name": "Grep", "count": 1},
+                ],
+            }
+        ]
+    }
+    transcript = [
+        {"type": "tool_call", "ts": 100.1, "id": "tu_1", "name": "Bash", "input": {"command": "ls"}},
+        {"type": "tool_call", "ts": 100.2, "id": "tu_2", "name": "Read", "input": {"file_path": "/x"}},
+        {"type": "tool_call", "ts": 100.3, "id": "tu_3", "name": "Grep", "input": {"pattern": "foo"}},
+        {"type": "tool_result", "ts": 100.4, "tool_use_id": "tu_1", "content": "out1", "is_error": False},
+        {"type": "tool_result", "ts": 100.5, "tool_use_id": "tu_3", "content": "out3", "is_error": True},
+        # tu_2 의 result 는 누락 (has_result=False 검증)
+    ]
+    cards = _build_turn_cards(summary, transcript, ended_at=110.0)
+    assert len(cards) == 1
+    pairs = cards[0]["tool_pairs"]
+    assert len(pairs) == 3
+    # 순서: tool_call 순서대로 emit
+    assert pairs[0] == {"name": "Bash", "input": {"command": "ls"}, "tool_use_id": "tu_1",
+                        "content": "out1", "is_error": False, "has_result": True}
+    assert pairs[1] == {"name": "Read", "input": {"file_path": "/x"}, "tool_use_id": "tu_2",
+                        "content": "", "is_error": False, "has_result": False}
+    assert pairs[2] == {"name": "Grep", "input": {"pattern": "foo"}, "tool_use_id": "tu_3",
+                        "content": "out3", "is_error": True, "has_result": True}
+
+
+def test_build_turn_cards_orphan_tool_result_skipped():
+    """매칭되는 tool_call 이 없는 tool_result 는 무시된다."""
+    from lib.history_renderer import _build_turn_cards
+    summary = {"turns": [{"model": "claude-opus-4-7", "started_at": 1.0,
+                          "input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                          "cache_read_tokens": 0, "tools_used": []}]}
+    transcript = [
+        {"type": "tool_result", "ts": 1.5, "tool_use_id": "tu_orphan", "content": "lost", "is_error": False},
+    ]
+    cards = _build_turn_cards(summary, transcript, ended_at=2.0)
+    assert cards[0]["tool_pairs"] == []
+
+
+def test_build_turn_cards_no_tools_emits_empty_pairs():
+    """도구 호출 없는 turn 은 tool_pairs 가 빈 list."""
+    from lib.history_renderer import _build_turn_cards
+    summary = {"turns": [{"model": "claude-opus-4-7", "started_at": 1.0,
+                          "input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_5m_tokens": 0, "cache_creation_1h_tokens": 0,
+                          "cache_read_tokens": 0, "tools_used": []}]}
+    transcript = [{"type": "assistant_text", "ts": 1.5, "text": "no tools used"}]
+    cards = _build_turn_cards(summary, transcript, ended_at=2.0)
+    assert cards[0]["tool_pairs"] == []
 
 
 def test_flatten_entry_includes_turns_array():

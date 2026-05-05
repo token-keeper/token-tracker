@@ -263,8 +263,8 @@
             ? tn.tools.map(x => `<span class="tool-pill">${escape(x.name)}${x.count > 1 ? '×' + x.count : ''}</span>`).join('')
             : `<span class="none">${escape(t('noTools'))}</span>`;
           const requestPreview = (() => {
-            if (tn.tool_call && tn.tool_call.input) {
-              const input = tn.tool_call.input;
+            if (tn.tool_pairs && tn.tool_pairs[0] && tn.tool_pairs[0].input) {
+              const input = tn.tool_pairs[0].input;
               const keys = Object.keys(input);
               if (keys.length > 0) {
                 const k = keys[0];
@@ -318,16 +318,22 @@
                 <div class="label">${escape(t('assistantText'))}</div>
                 <div class="body">${escape(cap(tn.assistant_text))}</div>
               </div>`);
-            if (tn.tool_call) sections.push(`
-              <div class="turn-section tool-call">
-                <div class="label">${escape(t('toolCall'))} · ${escape(tn.tool_call.name || '')}</div>
-                <div class="body">${escape(JSON.stringify(tn.tool_call.input || {}, null, 2))}</div>
-              </div>`);
-            if (tn.tool_result) sections.push(`
-              <div class="turn-section tool-result ${tn.tool_result.is_error ? 'is-error' : ''}">
-                <div class="label">${escape(t('toolResult'))}${tn.tool_result.is_error ? ' <span class="err">' + escape(t('errorBadge')) + '</span>' : ''}</div>
-                <div class="body">${escape(cap(tn.tool_result.content || ''))}</div>
-              </div>`);
+            (tn.tool_pairs || []).forEach(pair => {
+              sections.push(`
+                <div class="turn-section tool-call">
+                  <div class="label">${escape(t('toolCall'))} · ${escape(pair.name || '')}</div>
+                  <div class="body">${escape(JSON.stringify(pair.input || {}, null, 2))}</div>
+                </div>
+              `);
+              if (pair.has_result) {
+                sections.push(`
+                  <div class="turn-section tool-result ${pair.is_error ? 'is-error' : ''}">
+                    <div class="label">${escape(t('toolResult'))}${pair.is_error ? ' <span class="err">' + escape(t('errorBadge')) + '</span>' : ''}</div>
+                    <div class="body">${escape(cap(pair.content || ''))}</div>
+                  </div>
+                `);
+              }
+            });
             if (sections.length === 0) sections.push(`
               <div class="turn-section">
                 <div class="body" style="color:var(--fg-muted);font-style:italic">${escape(t('noContent'))}</div>

@@ -458,7 +458,7 @@ tr.expand-row > td {
 .turn-head:hover { background: var(--surface-2); }
 .turn-card.expanded .turn-head { border-bottom: 1px solid var(--border); }
 .turn-head:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.turn-head .col { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn-head .col:not(.th-tools) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .th-n { color: var(--fg-dim); }
 .th-model { color: var(--fg-muted); font-size: 11px; }
 .th-tools { color: var(--fg-muted); font-size: 11px; }
@@ -494,6 +494,7 @@ tr.expand-row > td {
   font-size: 10.5px;
   color: var(--fg);
   margin-right: 3px;
+  margin-bottom: 2px;
 }
 .th-cost {
   text-align: right;
