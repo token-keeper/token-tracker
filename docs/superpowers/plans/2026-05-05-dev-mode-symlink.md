@@ -443,7 +443,69 @@ ls ~/.claude/plugins/cache/token-tracker-local/token-tracker/
 
 기대: `0.9.0/` 정상 dir 로 복원, `0.9.0.backup/` 사라짐.
 
-- [ ] **Step 11: commit**
+- [ ] **Step 11: 이상 상태 검증 — case 3 (reinstall 끊김) + case 5 (symlink + no backup)**
+
+코드리뷰 피드백 반영으로 추가된 검증. 평소 사용자 흐름에선 잘 안 만나지만 실제 사용 환경에서 발생 가능한 이상 상태 두 가지 시뮬.
+
+**case 3 — reinstall 로 끊긴 상태 (정상 dir + backup 동시):**
+
+```bash
+# 시뮬: 정상 dir 자리에 빈 backup dir 도 만들어 reinstall 끊김 흉내
+mkdir -p ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0.backup
+ls ~/.claude/plugins/cache/token-tracker-local/token-tracker/
+```
+
+기대: `0.9.0/` (정상 dir) + `0.9.0.backup/` 동시 존재.
+
+```bash
+./scripts/dev-mode.sh status
+```
+
+기대 출력에 `경고: dev mode 가 reinstall 로 끊긴 것 같습니다.` 포함.
+
+```bash
+./scripts/dev-mode.sh off; echo "exit=$?"
+```
+
+기대: `자동 정리하지 않습니다` 안내 + 수동 처리 두 가지 옵션 (`rm -rf <backup>` 또는 `rm -rf <target> && mv ...`) 출력 + `exit=1`.
+
+정리:
+```bash
+rmdir ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0.backup
+```
+
+**case 5 — symlink 만 있고 backup 없음 (이상 상태):**
+
+```bash
+# 시뮬: 정상 cache 를 잠시 옆으로 옮기고 symlink 만 만들기 (backup 없이)
+mv ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0 \
+   ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0.realcopy
+ln -s /Users/brody/Desktop/token-tracker/plugins/token-tracker \
+      ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0
+ls -la ~/.claude/plugins/cache/token-tracker-local/token-tracker/
+```
+
+기대: `0.9.0` 이 symlink + `0.9.0.realcopy/` 정상 dir.
+
+```bash
+./scripts/dev-mode.sh off; echo "exit=$?"
+```
+
+기대 출력에 `ERROR: symlink 는 있는데 backup 이 없습니다.` + `rm '$target'` + `/plugin install` 안내 + `exit=1` 포함.
+
+정리 (case 5 시뮬을 정리해서 정상 cache 복원):
+```bash
+rm ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0
+mv ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0.realcopy \
+   ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0
+./scripts/dev-mode.sh status
+```
+
+기대 최종: `dev mode: OFF (정상 cache)`.
+
+**ln 실패 rollback** (cmd_on 의 `mv` 후 `ln -s` 실패 시 자동 backup 복원) 은 ln 자체 실패 시뮬이 어려워 (mv 까지 끝난 상태에서 ln 만 실패하게 하려면 race 가 필요) 자동 검증에선 제외. 코드 inspection 으로 검증 — 분기 단순함 (`if ! ln -s ...; then echo + mv backup target + exit 1; fi`).
+
+- [ ] **Step 12: commit**
 
 ```bash
 git add scripts/dev-mode.sh
@@ -573,13 +635,15 @@ git log --oneline main..HEAD
 git diff main..HEAD --stat
 ```
 
-기대 commit (4건):
+기대 commit (4건 + code review 반영 시 +1~2):
 1. `docs(spec): dev-mode.sh symlink 토글 설계 추가` (이미 done — Task 0 격)
 2. `feat(scripts): dev-mode.sh 스켈레톤 + status 명령 추가`
 3. `feat(scripts): dev-mode.sh on/off 명령 + 트랜잭션 안전성`
 4. `docs(readme): Development 섹션 — dev-mode.sh 사용법 + 수동 검증 체크리스트`
+5. (선택) `fix(scripts): code review 반영 — DRY / version 검증 / rollback 견고성`
+6. (선택) `docs(plan): 검증 step 추가 — case 3 / case 5`
 
-production 코드 (`scripts/dev-mode.sh`) 분량 ≈ 100줄, 룰 (300줄 이하) 충족.
+production 코드 (`scripts/dev-mode.sh`) 분량 ≈ 175줄, 룰 (300줄 이하) 충족.
 
 - [ ] **Step 2: 사용자에게 PR 생성 승인 요청**
 
