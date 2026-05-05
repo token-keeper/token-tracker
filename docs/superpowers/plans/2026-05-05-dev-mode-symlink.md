@@ -505,6 +505,55 @@ mv ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0.realcopy \
 
 **ln 실패 rollback** (cmd_on 의 `mv` 후 `ln -s` 실패 시 자동 backup 복원) 은 ln 자체 실패 시뮬이 어려워 (mv 까지 끝난 상태에서 ln 만 실패하게 하려면 race 가 필요) 자동 검증에선 제외. 코드 inspection 으로 검증 — 분기 단순함 (`if ! ln -s ...; then echo + mv backup target + exit 1; fi`).
 
+- [ ] **Step 11.5: manifest version bump 시나리오 — Codex review 반영**
+
+dev mode 가 켜진 상태에서 `plugin.json` 의 version 을 새 버전으로 bump 하는 release 흐름을 시뮬. spec §3 의 "DEV_VERSION 우선" 정책이 올바르게 동작하는지 확인.
+
+```bash
+# 사전: dev mode 켜기
+./scripts/dev-mode.sh on
+./scripts/dev-mode.sh status
+```
+
+기대: dev mode ON, `0.9.0` symlink + `0.9.0.backup/`.
+
+```bash
+# manifest 만 0.10.0 으로 bump (실제 cache 는 그대로 0.9.0)
+ORIG=$(cat plugins/token-tracker/.claude-plugin/plugin.json)
+python3 -c "import json; m=json.load(open('plugins/token-tracker/.claude-plugin/plugin.json')); m['version']='0.10.0'; json.dump(m, open('plugins/token-tracker/.claude-plugin/plugin.json','w'))"
+
+./scripts/dev-mode.sh status
+```
+
+기대: dev mode ON 으로 표시 + cache 경로가 여전히 `0.9.0` (DEV_VERSION 우선).
+
+```bash
+./scripts/dev-mode.sh on; echo "exit=$?"
+```
+
+기대: `ERROR: 이미 다른 version 의 dev mode 가 활성 상태입니다.` + 안내 + `exit=1`.
+
+```bash
+./scripts/dev-mode.sh off
+ls ~/.claude/plugins/cache/token-tracker-local/token-tracker/
+```
+
+기대: `0.9.0/` 정상 dir 로 복원, backup 사라짐. (manifest 가 0.10.0 이라도 cache 의 truth 인 0.9.0 위에서 정상 off.)
+
+```bash
+./scripts/dev-mode.sh status; echo "exit=$?"
+```
+
+기대: `ERROR: cache 가 없습니다: <cache_base>/0.10.0` (manifest 기준 cache 가 없음 = plugin reinstall 필요한 상태).
+
+정리:
+```bash
+echo "$ORIG" > plugins/token-tracker/.claude-plugin/plugin.json
+./scripts/dev-mode.sh status
+```
+
+기대: `dev mode: OFF (정상 cache)`.
+
 - [ ] **Step 12: commit**
 
 ```bash

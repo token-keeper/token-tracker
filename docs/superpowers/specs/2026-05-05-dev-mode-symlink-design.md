@@ -36,19 +36,28 @@ token-tracker plugin 은 두 곳에 존재한다:
 
 **인자 없음 / 환경변수 없음** — 모든 정보는 자동 추출.
 
-- active version: `plugins/token-tracker/.claude-plugin/plugin.json` 의 `version`
+- **`MANIFEST_VERSION`**: `plugins/token-tracker/.claude-plugin/plugin.json` 의 `version`
+- **`DEV_VERSION`**: `<cache_base>` 를 스캔해서 dev mode artifact (symlink 또는 `<X>.backup` dir) 가 있는 version. 없으면 빈 문자열.
+- **실제 사용 `VERSION`**: `DEV_VERSION` 이 있으면 그쪽 (active dev mode 가 truth), 없으면 `MANIFEST_VERSION`.
 - cache base: 하드코딩 `~/.claude/plugins/cache/token-tracker-local/token-tracker/`
 - 작업 폴더 plugin 경로: 스크립트 위치 기준 `dirname $0/../plugins/token-tracker`
 
+> **왜 `DEV_VERSION` 이 우선인가**: 사용자가 dev mode 를 켠 후 release 흐름에서 plugin.json 의 version 을 bump 하는 일이 흔하다. manifest 만 보면 `off` 가 새 version path 를 찾지만 cache 의 dev mode 는 옛 version 위에 있어 strand 됨. cache 자체를 truth source 로 두면 manifest bump 후에도 자가복구 가능.
+>
+> **여러 version 동시 dev artifact**: 비정상 상태로 간주, `find_active_dev_version` 이 stderr 안내 + exit 1.
+
 ## 4. `on` 동작
 
-1. `plugin.json` 에서 active version 읽기 (예: `0.9.0`)
-2. cache target 경로 계산: `<cache_base>/0.9.0/`
-3. 작업 폴더 plugin 경로 계산 (스크립트 기준 상대 → 절대 경로)
-4. **사전 검사**:
+1. `MANIFEST_VERSION` (`plugin.json`) + `DEV_VERSION` (cache 스캔) 추출
+2. **다른 version 의 dev mode 가 활성 상태에서 manifest 만 bump 된 경우 명시 안내**:
+   - `DEV_VERSION` 이 있고 `MANIFEST_VERSION` 과 다르면 → "이미 다른 version 의 dev mode 가 활성. 먼저 `off` 후 다시 `on`" 에러 (exit 1)
+3. `VERSION = MANIFEST_VERSION` (이 시점에 `DEV_VERSION` 은 빈 문자열이거나 manifest 와 동일)
+4. cache target 경로 계산: `<cache_base>/$VERSION/`
+5. 작업 폴더 plugin 경로 계산 (스크립트 기준 상대 → 절대 경로)
+6. **사전 검사**:
    - cache target 이 이미 symlink → "이미 dev mode" 안내 후 종료 (idempotent, exit 0)
    - cache target 이 존재하지 않음 → "plugin install 먼저" 에러 (exit 1)
-   - `<cache_base>/0.9.0.backup/` 이 이미 존재 → 충돌 에러 + 수동 정리 안내 (exit 1)
+   - `<cache_base>/$VERSION.backup/` 이 이미 존재 → 충돌 에러 + 수동 정리 안내 (exit 1)
    - 작업 폴더 plugin 경로가 존재하지 않음 → 에러 (exit 1)
 5. **트랜잭션 실행**:
    - `mv <cache_base>/0.9.0 <cache_base>/0.9.0.backup`
@@ -132,11 +141,13 @@ symlink 가 Claude Code plugin 시스템에서 정상 동작하는지 **먼저**
 
 | 사전 상태 | 동작 |
 |---|---|
+| 다른 version 의 dev mode 활성 (manifest bump 후) | 에러 + `off` 안내, exit 1 |
 | 이미 symlink (dev mode) | no-op + 안내, exit 0 |
 | backup dir 이 이미 존재 | 에러 + 수동 정리 안내, exit 1 |
 | cache target 자체 없음 | 에러 + plugin install 안내, exit 1 |
 | 작업 폴더 plugin 경로 없음 | 에러, exit 1 |
 | `mv` 후 `ln -s` 실패 | backup → target rollback + exit 1 |
+| 여러 version 동시 dev artifact | 에러 + 수동 정리 안내, exit 1 (`find_active_dev_version` 단계) |
 
 ### `off`
 
