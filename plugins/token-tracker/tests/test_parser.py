@@ -887,6 +887,32 @@ def test_parse_tool_result_list_with_tool_reference():
     assert out[0]["content"] == "[tool_reference] TaskCreate\n[tool_reference] TaskUpdate"
 
 
+def test_parse_tool_result_list_with_image():
+    """image block 이 [image: ...] placeholder 로 정규화된다 (v0.8.1 회귀 가드).
+
+    Playwright browser_take_screenshot 같은 도구가 image block 을 반환할 때
+    parse_tool_result 가 빈 문자열로 떨어뜨리지 않음을 통합 레벨에서 가드."""
+    from lib.parser import parse_tool_result
+    entry = {
+        "type": "user",
+        "timestamp": "2026-05-03T14:23:01Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_screenshot_1",
+                    "content": [
+                        {"type": "image", "source": {"media_type": "image/png"}},
+                    ],
+                }
+            ]
+        },
+    }
+    out = parse_tool_result(entry)
+    assert len(out) == 1
+    assert out[0]["content"] == "[image: image/png]"
+
+
 def test_parse_tool_result_list_mixed_text_and_tool_reference():
     """text + tool_reference 혼합 block 도 줄바꿈으로 join 된다."""
     from lib.parser import parse_tool_result
