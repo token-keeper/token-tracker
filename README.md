@@ -100,13 +100,51 @@ Use this plugin's output for **optimization signal** (did caching improve? is th
 
 ### 개발 모드
 
-repo를 수정하면서 바로 반영하려면 symlink 방식을 쓸 수 있습니다:
+repo 의 코드 변경을 매 reinstall 없이 즉시 반영하려면 [Development 섹션](#development) 의 `scripts/dev-mode.sh` 토글 사용을 권장합니다.
+
+`.claude/settings.local.json` 에 hook 을 직접 등록하던 이전 방식은 더 이상 사용하지 않습니다.
+
+## Development
+
+### dev mode (작업 폴더 ↔ cache 즉시 반영)
+
+플러그인 코드 수정 시 매번 plugin reinstall 하지 않고 작업 폴더 변경을 즉시 반영하려면 `scripts/dev-mode.sh` 의 dev mode 를 사용합니다.
 
 ```bash
-ln -s /Users/you/Desktop/token-tracker ~/.claude/marketplaces/token-tracker-local
+./scripts/dev-mode.sh on      # cache → 작업 폴더 symlink 로 교체
+./scripts/dev-mode.sh off     # 원본 cache 복원
+./scripts/dev-mode.sh status  # 현재 상태 확인
 ```
 
-그 외 `.claude/settings.local.json`에 hook을 직접 등록하는 이전 방식은 더 이상 사용하지 않습니다.
+`on` 시 cache 디렉터리는 `<version>.backup/` 으로 백업되고, 그 자리에 작업 폴더의 `plugins/token-tracker/` 를 가리키는 symlink 가 생깁니다. `off` 는 그 역순으로 원본을 복원합니다.
+
+#### daemon 코드 수정 시
+
+`lib/server_daemon.py`, `lib/http_server.py`, `lib/history_renderer.py` 같은 daemon 코드를 수정하면 실행 중 daemon 을 재시작해야 반영됩니다:
+
+```
+/token-tracker:token-history-stop
+```
+
+`style.css` / `app.js` / 템플릿 같은 정적 파일은 daemon 이 매 요청마다 디스크에서 읽으므로 브라우저 새로고침 (cmd+R) 만으로 즉시 반영됩니다.
+
+#### plugin reinstall 과의 관계
+
+dev mode 가 켜진 상태에서 `/plugin uninstall` + `/plugin install` 을 하면 plugin 시스템이 cache 디렉터리를 새로 만들면서 symlink 가 사라질 수 있습니다. 이 상태는 `./scripts/dev-mode.sh status` 가 감지해서 안내합니다. 어느 쪽이 truth 인지 스크립트가 판단할 수 없으므로 자동 정리하지 않고 수동 처리 명령만 안내합니다.
+
+#### 수동 검증 체크리스트
+
+dev mode 를 처음 켜는 환경 / Claude Code 업데이트 후 등 기본 동작이 의심될 때:
+
+1. `./scripts/dev-mode.sh status` → "OFF" 확인
+2. `./scripts/dev-mode.sh on` → "ON" + 가리키는 경로 출력 확인
+3. `/reload-plugins` 실행
+4. 새 prompt 한 번 입력 → 응답 마지막에 토큰 줄 (`비용 $... · ... toks ...`) 출력 확인
+5. `/token-tracker:token-history` → daemon 정상 동작 + URL 응답 확인
+6. 작업 폴더의 `plugins/token-tracker/skills/token-history/static/style.css` 한 줄 수정 → 위 페이지 새로고침으로 즉시 반영 확인 (사용자 메모: 빨간색 `#FF0000` 임시 마커가 효과적)
+7. `./scripts/dev-mode.sh off` → "OFF" 복원 + `<version>.backup/` 사라짐 확인
+
+3~5 가 실패하면 plugin 시스템이 symlink 를 인식하지 못하는 것입니다. 즉시 `off` 로 복원하고 이슈 리포트.
 
 ## Tests
 
