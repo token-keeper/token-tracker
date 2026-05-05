@@ -102,8 +102,8 @@ def _build_turn_cards(
 
         thinking_parts: list[str] = []
         assistant_parts: list[str] = []
-        tool_call: dict | None = None
-        tool_result: dict | None = None
+        tool_calls_raw: list[dict] = []
+        tool_results_raw: list[dict] = []
         for e in sorted_entries:
             ts = float(e.get("ts") or 0.0)
             if ts < t_start:
@@ -117,17 +117,33 @@ def _build_turn_cards(
                 thinking_parts.append(str(e.get("text") or ""))
             elif etype == "assistant_text":
                 assistant_parts.append(str(e.get("text") or ""))
-            elif etype == "tool_call" and tool_call is None:
-                tool_call = {
+            elif etype == "tool_call":
+                tool_calls_raw.append({
                     "name": str(e.get("name") or ""),
                     "input": e.get("input") or {},
-                }
-            elif etype == "tool_result" and tool_result is None:
-                content = str(e.get("content") or "")
-                tool_result = {
-                    "content": content[:_TURN_TEXT_CAP_BYTES],
+                    "tool_use_id": str(e.get("id") or ""),
+                })
+            elif etype == "tool_result":
+                tool_results_raw.append({
+                    "tool_use_id": str(e.get("tool_use_id") or ""),
+                    "content": str(e.get("content") or "")[:_TURN_TEXT_CAP_BYTES],
                     "is_error": bool(e.get("is_error") or False),
-                }
+                })
+
+        # tool_use_id 기반 매칭 (call 순서대로 emit)
+        results_by_id = {r["tool_use_id"]: r for r in tool_results_raw if r["tool_use_id"]}
+        tool_pairs: list[dict] = []
+        for c in tool_calls_raw:
+            tuid = c["tool_use_id"]
+            r = results_by_id.get(tuid)
+            tool_pairs.append({
+                "name": c["name"],
+                "input": c["input"],
+                "tool_use_id": tuid,
+                "content": r["content"] if r else "",
+                "is_error": r["is_error"] if r else False,
+                "has_result": r is not None,
+            })
 
         if i + 1 < len(raw_turns):
             elapsed = max(0.0, t_end - t_start)
@@ -166,8 +182,7 @@ def _build_turn_cards(
             "elapsed": elapsed,
             "thinking": thinking_text,
             "assistant_text": assistant_text,
-            "tool_call": tool_call,
-            "tool_result": tool_result,
+            "tool_pairs": tool_pairs,
         })
     return cards
 
