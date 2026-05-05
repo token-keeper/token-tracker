@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 import traceback
 from pathlib import Path
 
@@ -34,13 +33,9 @@ def main(argv: list[str]) -> int:
 
     try:
         from lib.config import get_language, load_config
-        from lib import paths
-        from lib.history_store import (
-            load_all_sessions_history,
-            load_session_history,
-        )
-        from lib.history_renderer import render_history_html
+        from lib.history_store import load_session_history
         from lib.i18n_loader import load_strings
+        from lib.http_server import ensure_server_running
 
         lang = get_language(load_config(plugin_root))
         strings = load_strings(lang)
@@ -49,28 +44,16 @@ def main(argv: list[str]) -> int:
             print(strings["no_data_message"])
             return 0
 
+        # 데이터 존재 확인 (없으면 안 띄움)
         current = load_session_history(session_id)
-        all_sessions = load_all_sessions_history()
+        if not current:
+            print(strings["no_data_message"])
+            return 0
 
-        html = render_history_html(current=current, all_sessions=all_sessions, lang=lang)
+        # daemon 시작 (idempotent)
+        ensure_server_running()
 
-        out_dir = paths.state_dir() / session_id
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ts = int(time.time())
-        out_path = out_dir / f"history-{ts}.html"
-        out_path.write_text(html, encoding="utf-8")
-
-        # Keep only the 2 most recent snapshots per session to bound disk usage.
-        # Timestamp suffix is for browser cache-bust (spec §2); accumulating
-        # every snapshot would silently grow disk over time.
-        existing = sorted(out_dir.glob("history-*.html"))
-        for old in existing[:-2]:
-            try:
-                old.unlink()
-            except OSError:
-                pass
-
-        url = f"file://{out_path}"
+        url = f"http://127.0.0.1:8765/{session_id}"
         try:
             subprocess.run(["open", url], check=False)
         except FileNotFoundError:
@@ -87,7 +70,7 @@ def main(argv: list[str]) -> int:
             print(load_strings("en")["no_data_message"])
         except Exception:
             print("token-history: unexpected error")
-        return 0
+        return 1
 
 
 if __name__ == "__main__":
