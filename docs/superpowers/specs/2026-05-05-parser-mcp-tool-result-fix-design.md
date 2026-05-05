@@ -89,9 +89,9 @@ helper 가 `""` 를 반환한 block 은 join 결과에서 제외 (`p for p in pa
 
 ## 6. 테스트
 
-`tests/test_parser.py` 에 신규 케이스 14개 추가.
+`tests/test_parser.py` 에 신규 케이스 16개 추가.
 
-### 6.1 `_normalize_tool_result_block` 단위 (10개)
+### 6.1 `_normalize_tool_result_block` 단위 (12개)
 
 | # | input | expected |
 |---|---|---|
@@ -115,7 +115,7 @@ helper 가 `""` 를 반환한 block 은 join 결과에서 제외 (`p for p in pa
 | 13 | content = `[tool_reference, tool_reference]` (실측 케이스) | `"[tool_reference] TaskCreate\n[tool_reference] TaskUpdate"` |
 | 14 | content = `[{}]` (타입 누락 block) | `""` |
 
-전체 테스트 카운트: 327 → 341.
+전체 테스트 카운트: 327 → 343.
 
 ## 7. 호환성
 
@@ -126,7 +126,7 @@ helper 가 `""` 를 반환한 block 은 join 결과에서 제외 (`p for p in pa
 
 ## 8. Definition of Done
 
-1. 신규 14개 + 기존 327개 = 341/341 테스트 통과 (`./venv/bin/pytest plugins/token-tracker/tests -q`).
+1. 신규 16개 + 기존 327개 = 343/343 테스트 통과 (`./venv/bin/pytest plugins/token-tracker/tests -q`).
 2. `plugin.json` / `marketplace.json` 버전 v0.8.1 반영.
 3. PR 생성 → 사용자 리뷰 → 승인 후 머지.
 
