@@ -3,6 +3,7 @@
   --bg: #0A0A0B;
   --surface: #111113;
   --surface-2: #16161A;
+  --surface-elev: #22222A;
   --border: #1F1F23;
   --border-strong: #2A2A30;
   --fg: #E8E8EA;
@@ -26,6 +27,7 @@
   --bg: #FAFAFA;
   --surface: #FFFFFF;
   --surface-2: #F4F4F5;
+  --surface-elev: #F4F4F5;
   --border: #E5E5E8;
   --border-strong: #D4D4D8;
   --fg: #18181B;
@@ -44,6 +46,7 @@
     --bg: #FAFAFA;
     --surface: #FFFFFF;
     --surface-2: #F4F4F5;
+    --surface-elev: #F4F4F5;
     --border: #E5E5E8;
     --border-strong: #D4D4D8;
     --fg: #18181B;
@@ -276,7 +279,7 @@ tbody tr.row:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
-tbody tr.row.expanded { background: var(--surface-2); }
+tbody tr.row.expanded { background: var(--surface-elev); }
 tbody td {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
@@ -383,7 +386,7 @@ tbody tr:last-child td { border-bottom: 0; }
 /* Expanded row — turn list */
 tr.expand-row > td {
   padding: 0;
-  background: var(--surface-2);
+  background: var(--surface-elev);
   border-bottom: 1px solid var(--border);
 }
 .expand-inner {
