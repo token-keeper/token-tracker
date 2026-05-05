@@ -109,8 +109,8 @@ _resolve_paths() {
 cmd_status() {
     _resolve_paths
 
-    # 인터럽트된 on 작업 잔재 (target 없음 + backup 만 존재)
-    if [[ ! -e "$TARGET" && -d "$BACKUP" ]]; then
+    # 인터럽트된 on 작업 잔재 (target 없음 + backup 만 존재, dangling symlink 제외)
+    if [[ ! -e "$TARGET" && ! -L "$TARGET" && -d "$BACKUP" ]]; then
         echo "경고: 인터럽트된 on 작업 잔재 감지."
         echo "  cache:  없음"
         echo "  backup: $BACKUP (남아있음)"
@@ -121,7 +121,14 @@ cmd_status() {
     if [[ -L "$TARGET" ]]; then
         echo "dev mode: ON"
         echo "  cache:  $TARGET"
-        echo "  → link: $(readlink "$TARGET")"
+        local link
+        link="$(readlink "$TARGET")"
+        if [[ -e "$TARGET" ]]; then
+            echo "  → link: $link"
+        else
+            echo "  → link: $link  (DANGLING — 대상이 존재하지 않음)"
+            echo "조치: $0 off 로 backup 복원 (PLUGIN_SRC 가 사라진 것으로 보임)."
+        fi
         return 0
     fi
 
@@ -208,8 +215,9 @@ cmd_on() {
 cmd_off() {
     _resolve_paths
 
-    # 1. 인터럽트된 on 작업 잔재 (target 없음 + backup 만 존재) — 자가복구
-    if [[ ! -e "$TARGET" && -d "$BACKUP" ]]; then
+    # 1. 인터럽트된 on 작업 잔재 (target 없음 + backup 만 존재, dangling symlink 제외)
+    # — 자가복구. dangling symlink + backup 케이스는 case 4 가 처리함 (rm symlink + mv backup).
+    if [[ ! -e "$TARGET" && ! -L "$TARGET" && -d "$BACKUP" ]]; then
         echo "감지: 인터럽트된 on 작업 잔재 (target 없음, backup 존재)."
         echo "backup 을 원본 위치로 복원합니다."
         mv "$BACKUP" "$TARGET"

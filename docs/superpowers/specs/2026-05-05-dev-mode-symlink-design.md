@@ -153,19 +153,22 @@ symlink 가 Claude Code plugin 시스템에서 정상 동작하는지 **먼저**
 
 | cache 상태 | 동작 |
 |---|---|
-| 1. target 없음 + backup 만 (인터럽트 잔재) | backup → target 복원, exit 0 |
+| 1. target 없음 + backup 만 (인터럽트 잔재, dangling symlink 제외) | backup → target 복원, exit 0 |
 | 2. 정상 dir + backup 없음 (이미 OFF) | no-op + 안내, exit 0 |
 | 3. 정상 dir + backup 둘 다 (reinstall 끊김) | **자동 정리 안 함**, 수동 안내 + exit 1 |
-| 4. symlink + backup (정상 dev mode) | symlink 제거 + backup 복원, exit 0 |
+| 4. symlink + backup (정상 dev mode 또는 dangling symlink) | symlink 제거 + backup 복원, exit 0 |
 | 5. symlink 만 있고 backup 없음 (이상) | 에러 + 수동 복구 안내, exit 1 |
 | 6. 알 수 없는 상태 | 에러 + `ls -la` 안내, exit 1 |
+
+> **case 1 의 `! -L` 단서**: bash 의 `! -e` 는 dangling symlink 에서도 true 라 case 1 이 dangling + backup 케이스를 가로채면 mv 가 symlink 위에 dir 을 넣으려 해서 실패할 수 있다. case 1 진입 조건에 `! -L` 을 추가해 dangling symlink 는 case 4 가 처리하도록 한다 (case 4 의 `rm symlink + mv backup` 이 안전한 복원 경로).
 
 ### `status`
 
 | cache 상태 | 출력 |
 |---|---|
-| target 없음 + backup 만 | "경고: 인터럽트된 on 작업 잔재 감지" |
-| symlink | "dev mode ON" + 가리키는 경로 |
+| target 없음 + backup 만 (dangling symlink 제외) | "경고: 인터럽트된 on 작업 잔재 감지" |
+| symlink + 대상 존재 | "dev mode ON" + 가리키는 경로 |
+| symlink + 대상 없음 (dangling) | "dev mode ON" + DANGLING 표시 + `off` 권유 |
 | 정상 dir + backup 동시 | "경고: reinstall 로 끊김. `off` 안내 따라 수동 처리" |
 | 정상 dir, backup 없음 | "dev mode OFF (정상 cache)" |
 | 둘 다 없음 | 에러: "cache 없음 — plugin install 필요" |

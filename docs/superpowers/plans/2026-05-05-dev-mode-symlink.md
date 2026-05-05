@@ -554,6 +554,40 @@ echo "$ORIG" > plugins/token-tracker/.claude-plugin/plugin.json
 
 기대: `dev mode: OFF (정상 cache)`.
 
+- [ ] **Step 11.6: Dangling symlink 시나리오 — Codex re-review 반영**
+
+PLUGIN_SRC 가 이동/삭제된 상태에서 dev mode 가 dangling symlink 만 남는 케이스. bash 의 `! -e` 가 dangling 에서 true 라 case 1 이 dangling + backup 을 가로채면 `mv` 가 symlink 위에 dir 을 넣으려다 실패할 수 있음. case 1 의 `! -L` 단서 + case 4 가 dangling + backup 도 안전하게 처리하는지 검증.
+
+```bash
+# 시뮬: cache 자리에 dangling symlink + backup dir
+mv ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0 \
+   ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0.backup
+ln -s /nonexistent/path/that/does/not/exist \
+      ~/.claude/plugins/cache/token-tracker-local/token-tracker/0.9.0
+ls -la ~/.claude/plugins/cache/token-tracker-local/token-tracker/
+```
+
+기대: `0.9.0` 이 dangling symlink, `0.9.0.backup/` 정상 dir.
+
+```bash
+./scripts/dev-mode.sh status
+```
+
+기대 출력:
+```
+dev mode: ON
+  cache:  ...0.9.0
+  → link: /nonexistent/path/that/does/not/exist  (DANGLING — 대상이 존재하지 않음)
+조치: ./scripts/dev-mode.sh off 로 backup 복원 (PLUGIN_SRC 가 사라진 것으로 보임).
+```
+
+```bash
+./scripts/dev-mode.sh off
+ls ~/.claude/plugins/cache/token-tracker-local/token-tracker/
+```
+
+기대: case 4 분기 (정상 dev mode 와 동일 처리) 로 `dev mode: OFF, 원본 복원됨` 출력. `0.9.0/` 정상 dir 만 남음.
+
 - [ ] **Step 12: commit**
 
 ```bash
