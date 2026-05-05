@@ -7,3 +7,10 @@ venv/
 .claude/settings.local.json
 .obsidian/
 /scripts/
+
+# Playwright MCP 임시 파일 / 작업 중 스크린샷 (root 한정)
+/.playwright-mcp/
+/*.png
+
+# token-tracker daemon 로그 (개인 머신 로컬)
+plugins/token-tracker/log/
