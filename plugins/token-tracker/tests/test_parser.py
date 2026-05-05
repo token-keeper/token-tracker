@@ -752,6 +752,37 @@ def test_parse_thinking_returns_empty_when_none():
 
 
 # ---------------------------------------------------------------------------
+# _normalize_tool_result_block
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("block,expected", [
+    # text
+    ({"type": "text", "text": "hello"}, "hello"),
+    ({"type": "text", "text": ""}, ""),
+    ({"type": "text"}, ""),
+    # tool_reference (MCP ToolSearch 결과)
+    ({"type": "tool_reference", "tool_name": "TaskCreate"}, "[tool_reference] TaskCreate"),
+    ({"type": "tool_reference"}, "[tool_reference]"),
+    # image (Playwright screenshot 등)
+    (
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "A" * 1024}},
+        "[image: image/png, 768 bytes]",
+    ),
+    ({"type": "image", "source": {"media_type": "image/png"}}, "[image: image/png]"),
+    ({"type": "image", "source": {"data": "A" * 1024}}, "[image: 768 bytes]"),
+    ({"type": "image", "source": {}}, "[image]"),
+    ({"type": "image"}, "[image]"),
+    # unknown type 방어 placeholder
+    ({"type": "some_new_block", "x": 1}, "[some_new_block]"),
+    # type 키 누락 → skip
+    ({}, ""),
+])
+def test_normalize_tool_result_block(block, expected):
+    assert parser._normalize_tool_result_block(block) == expected
+
+
+# ---------------------------------------------------------------------------
 # parse_tool_call / parse_tool_result
 # ---------------------------------------------------------------------------
 

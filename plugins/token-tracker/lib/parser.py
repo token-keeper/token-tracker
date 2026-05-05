@@ -321,6 +321,41 @@ def parse_tool_call(entry: dict) -> list[dict]:
     return out
 
 
+def _normalize_tool_result_block(block: dict) -> str:
+    """tool_result.content 안의 단일 block 을 사람이 읽을 수 있는 string 으로 정규화.
+
+    알려진 type: text, tool_reference, image. 그 외에는 [<type>] placeholder 를
+    반환해 미래에 새 block type 이 등장해도 조용히 빈 문자열로 떨어지지 않게 한다.
+    type 키 자체가 없으면 빈 문자열 (caller 가 join 단계에서 skip)."""
+    t = block.get("type")
+    if not t:
+        return ""
+    if t == "text":
+        text = block.get("text")
+        return text if isinstance(text, str) else ""
+    if t == "tool_reference":
+        name = block.get("tool_name")
+        if isinstance(name, str) and name:
+            return f"[tool_reference] {name}"
+        return "[tool_reference]"
+    if t == "image":
+        source = block.get("source")
+        if not isinstance(source, dict):
+            source = {}
+        mt = source.get("media_type")
+        media_type = mt if isinstance(mt, str) and mt else None
+        data = source.get("data")
+        size_bytes = (len(data) * 3 // 4) if isinstance(data, str) and data else None
+        if media_type and size_bytes is not None:
+            return f"[image: {media_type}, {size_bytes} bytes]"
+        if media_type:
+            return f"[image: {media_type}]"
+        if size_bytes is not None:
+            return f"[image: {size_bytes} bytes]"
+        return "[image]"
+    return f"[{t}]"
+
+
 def parse_tool_result(entry: dict) -> list[dict]:
     """Extract tool_result blocks from user entry (Claude Code injects results
     as user messages). Normalizes content to a single string."""
