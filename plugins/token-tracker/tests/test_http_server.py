@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import socket
 import subprocess
 import sys
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,10 +74,12 @@ def test_ensure_server_running_starts_when_dead_and_polls_until_alive():
 
 def test_ensure_server_running_raises_runtime_error_on_startup_timeout():
     from lib.http_server import ensure_server_running
-    # 영원히 dead
+    # 영원히 dead. time.time mock 으로 즉시 deadline 초과 (실제 3초 대기 회피).
+    time_values = iter([0.0, 0.0, 100.0])  # 첫 호출 deadline 계산, 이후 polling 비교
     with patch("lib.http_server.is_alive", return_value=False), \
          patch("subprocess.Popen"), \
-         patch("time.sleep"):
+         patch("time.sleep"), \
+         patch("time.time", side_effect=lambda: next(time_values)):
         with pytest.raises(RuntimeError, match="failed to start"):
             ensure_server_running()
 
@@ -113,3 +115,27 @@ def test_stop_handles_lsof_returning_no_pids_via_calledprocesserror():
     err = subprocess.CalledProcessError(returncode=1, cmd=["lsof"], output=b"")
     with patch("subprocess.check_output", side_effect=err):
         assert stop() == 0
+
+
+def test_stop_sigkills_pid_when_still_alive_after_sigterm():
+    """SIGTERM 후 일부 PID 가 살아있으면 그 PID 만 SIGKILL."""
+    from lib.http_server import stop
+    # PID 123 은 SIGTERM 후에도 alive (kill(0) 성공), 456 은 죽음 (ProcessLookupError)
+    def kill_side_effect(pid, sig):
+        import signal as _sig
+        if sig == 0:
+            if pid == 456:
+                raise ProcessLookupError
+            return  # pid=123 alive
+        # SIGTERM, SIGKILL 은 그냥 통과
+        return
+    with patch("subprocess.check_output", return_value=b"123\n456\n"), \
+         patch("os.kill", side_effect=kill_side_effect) as kill, \
+         patch("time.sleep"):
+        n = stop()
+        assert n == 2
+    # SIGKILL 은 살아있던 123 에만 1번
+    import signal as _sig
+    sigkill_calls = [c for c in kill.call_args_list if len(c.args) == 2 and c.args[1] == _sig.SIGKILL]
+    assert len(sigkill_calls) == 1
+    assert sigkill_calls[0].args[0] == 123

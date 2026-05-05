@@ -7,11 +7,10 @@ from __future__ import annotations
 
 import os
 import signal
-import socket
 import subprocess
 import sys
 import time
-from http.client import HTTPConnection, HTTPResponse
+from http.client import HTTPConnection, HTTPException, HTTPResponse
 from pathlib import Path
 
 
@@ -32,7 +31,7 @@ def is_alive(host: str = _HOST, port: int = _PORT) -> bool:
     """포트에 우리 daemon 이 살아있는지 (X-Token-Tracker 헤더로 판별)."""
     try:
         resp = _healthcheck(host, port)
-    except (ConnectionRefusedError, socket.timeout, OSError):
+    except (OSError, HTTPException):
         return False
     if resp.status != 200:
         return False
@@ -61,6 +60,7 @@ def ensure_server_running() -> None:
         stderr=log_fp,
         start_new_session=True,
     )
+    log_fp.close()  # subprocess 가 fd 상속 후 부모는 close
     # polling
     deadline = time.time() + _STARTUP_TIMEOUT
     while time.time() < deadline:
@@ -89,12 +89,16 @@ def stop() -> int:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-    # 짧게 대기 후 살아있으면 SIGKILL
+    # 짧게 대기 후 각 PID 별로 생존 체크 → 살아있으면 SIGKILL
     time.sleep(0.5)
-    if is_alive():
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+    for pid in pids:
+        try:
+            os.kill(pid, 0)  # 0 = signal 없음, 생존 확인용
+        except ProcessLookupError:
+            continue  # 이미 죽음
+        # 살아있음 → SIGKILL
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
     return len(pids)
