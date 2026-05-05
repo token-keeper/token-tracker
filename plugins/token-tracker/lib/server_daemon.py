@@ -47,20 +47,14 @@ def _most_recent_session_id() -> str | None:
     return latest_sid
 
 
-def _render_session_html(session_id: str) -> bytes:
+def _render_session_html(session_id: str, current_entries: list[dict]) -> bytes:
     from lib.config import get_language, load_config
     from lib.history_renderer import render_history_html
-    from lib.history_store import (
-        load_all_sessions_history,
-        load_session_history,
-    )
-    from lib.i18n_loader import load_strings
+    from lib.history_store import load_all_sessions_history
     plugin_root = Path(__file__).resolve().parent.parent
     lang = get_language(load_config(plugin_root))
-    load_strings(lang)  # 캐시 워밍 (renderer 가 내부 사용)
-    current = load_session_history(session_id)
     all_sessions = load_all_sessions_history()
-    html = render_history_html(current=current, all_sessions=all_sessions, lang=lang)
+    html = render_history_html(current=current_entries, all_sessions=all_sessions, lang=lang)
     return html.encode("utf-8")
 
 
@@ -72,18 +66,15 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self):
-        path = self.path
-        if path == "/healthz":
+        clean_path = self.path.split("?", 1)[0].split("#", 1)[0]
+        if clean_path == "/healthz":
             return self._respond_healthz()
-        if path == "/favicon.ico":
+        if clean_path == "/favicon.ico":
             return self._respond_favicon()
-        if path == "/":
+        if clean_path == "/":
             return self._respond_root()
         # /{session_id} 형태 — leading slash 제거
-        candidate = path[1:] if path.startswith("/") else path
-        # query string 제거
-        if "?" in candidate:
-            candidate = candidate.split("?", 1)[0]
+        candidate = clean_path[1:] if clean_path.startswith("/") else clean_path
         if not _SESSION_ID_RE.match(candidate):
             return self._respond_text(400, "invalid session id")
         return self._respond_session(candidate)
@@ -115,7 +106,7 @@ class _Handler(BaseHTTPRequestHandler):
         entries = load_session_history(session_id)
         if not entries:
             return self._respond_text(404, "session not found")
-        body = _render_session_html(session_id)
+        body = _render_session_html(session_id, entries)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
