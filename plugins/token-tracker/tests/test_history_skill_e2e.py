@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import json
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,26 +36,49 @@ def _seed_history(monkeypatch, tmp_path):
     )
 
 
-def test_history_script_writes_html_and_prints_url(tmp_path, monkeypatch, capsys):
+def test_history_script_starts_server_and_prints_http_url(tmp_path, monkeypatch, capsys):
     _seed_history(monkeypatch, tmp_path)
     run_history = _import_history_main()
-    with patch("subprocess.run") as mocked:
-        run_history(["history.py", "s_skill"])
-        assert mocked.called
-
+    with patch("lib.http_server.ensure_server_running") as ensure, \
+         patch("subprocess.run") as opened:
+        rc = run_history(["history.py", "s_skill"])
+    assert rc == 0
+    ensure.assert_called_once()
+    opened.assert_called_once()
     out = capsys.readouterr().out
     assert "opened:" in out
+    assert "http://127.0.0.1:8765/s_skill" in out
 
+
+def test_history_script_does_not_write_html_file(tmp_path, monkeypatch):
+    """동적 렌더 도입 후 디스크 HTML 파일 더 이상 생성 안 됨."""
+    _seed_history(monkeypatch, tmp_path)
+    run_history = _import_history_main()
+    with patch("lib.http_server.ensure_server_running"), \
+         patch("subprocess.run"):
+        run_history(["history.py", "s_skill"])
     from lib import paths
     candidates = list((paths.state_dir() / "s_skill").glob("history-*.html"))
-    assert len(candidates) == 1
-    assert "p_1" in candidates[0].read_text(encoding="utf-8")
+    assert candidates == []
 
 
 def test_history_script_prints_url_even_when_open_fails(tmp_path, monkeypatch, capsys):
+    """`open` 실행 실패해도 URL 은 stdout 에 출력."""
     _seed_history(monkeypatch, tmp_path)
     run_history = _import_history_main()
-    with patch("subprocess.run", side_effect=FileNotFoundError("no open")):
+    with patch("lib.http_server.ensure_server_running"), \
+         patch("subprocess.run", side_effect=FileNotFoundError("no open")):
         run_history(["history.py", "s_skill"])
     out = capsys.readouterr().out
-    assert "opened:" in out  # URL still printed
+    assert "opened:" in out
+
+
+def test_history_script_handles_server_startup_failure(tmp_path, monkeypatch, capsys):
+    """ensure_server_running 이 RuntimeError 던지면 traceback stderr 출력 + 0 이외 return."""
+    _seed_history(monkeypatch, tmp_path)
+    run_history = _import_history_main()
+    with patch("lib.http_server.ensure_server_running",
+               side_effect=RuntimeError("daemon failed to start")):
+        rc = run_history(["history.py", "s_skill"])
+    err = capsys.readouterr().err
+    assert "daemon failed" in err or "RuntimeError" in err
