@@ -50,9 +50,10 @@ token-tracker plugin 은 두 곳에 존재한다:
    - cache target 이 존재하지 않음 → "plugin install 먼저" 에러 (exit 1)
    - `<cache_base>/0.9.0.backup/` 이 이미 존재 → 충돌 에러 + 수동 정리 안내 (exit 1)
    - 작업 폴더 plugin 경로가 존재하지 않음 → 에러 (exit 1)
-5. **실행**:
+5. **트랜잭션 실행**:
    - `mv <cache_base>/0.9.0 <cache_base>/0.9.0.backup`
    - `ln -s <abs_work_plugin_path> <cache_base>/0.9.0`
+   - **`ln -s` 가 실패하면 즉시 backup 을 target 으로 되돌려 cache 를 원상복구 후 exit 1.** `mv` 만 끝난 상태로 cache 가 사라진 채 멈추는 일이 없도록 한다.
 6. 안내 출력:
    - 어느 경로 → 어디로 symlink 됐는지
    - "이제 코드 수정 즉시 반영. daemon 코드 변경 시 `/token-tracker:token-history-stop` 후 재호출."
@@ -60,24 +61,27 @@ token-tracker plugin 은 두 곳에 존재한다:
 
 ## 5. `off` 동작
 
-1. active version 읽기
-2. cache target 경로 계산
-3. **사전 검사**:
-   - cache target 이 symlink 가 아님 → "이미 정상 mode" 안내 후 종료 (idempotent, exit 0)
-   - `<cache_base>/0.9.0.backup/` 이 없음 → 에러 + 수동 복구 안내 (exit 1)
-4. **실행**:
-   - `rm <cache_base>/0.9.0` (symlink 만 제거)
-   - `mv <cache_base>/0.9.0.backup <cache_base>/0.9.0`
-5. 안내 출력: "정상 mode 로 복원. cache 가 갱신되려면 reinstall 필요."
+cache 의 현재 상태가 6개 케이스 중 어디에 해당하는지 분기해서 처리한다 (§10 의 안전 장치 표와 일치).
+
+1. active version 읽기 + cache target / backup 경로 계산
+2. **케이스별 분기**:
+   1. **인터럽트 잔재** (target 없음 + backup 만) → backup → target 으로 mv 하여 자가복구. exit 0.
+   2. **이미 정상 mode** (정상 dir + backup 없음) → no-op + 안내. exit 0.
+   3. **reinstall 로 끊긴 상태** (정상 dir + backup 둘 다 존재) → **자동 정리 안 함**. 어느 쪽이 truth 인지 스크립트가 판단할 수 없으므로 사용자가 수동으로 결정하도록 두 가지 명령 (`rm -rf "$backup"` 또는 `rm -rf "$target" && mv "$backup" "$target"`) 안내 후 exit 1.
+   4. **정상 dev mode** (symlink + backup) → 표준 off: `rm <symlink>` + `mv <backup> <target>`. exit 0.
+   5. **symlink 만 있고 backup 없음** (이상 상태) → 에러 + 수동 복구 안내 (`rm <symlink>` + plugin reinstall). exit 1.
+   6. **알 수 없는 상태** → 에러 + `ls -la` 로 확인 안내. exit 1.
+3. 안내 출력: 해당 케이스에 맞는 메시지.
 
 ## 6. `status` 동작
 
 active version 기준 cache target 의 상태를 한 번에 보고:
 
+- **인터럽트 잔재** (target 없음 + backup 만 존재) → "경고: 인터럽트된 on 작업 잔재 감지. `off` 로 backup 복원."
 - **symlink** → 가리키는 절대 경로 출력, "dev mode ON"
-- **일반 dir** → "dev mode OFF (정상 cache)"
-- **존재하지 않음** → "cache 없음 — plugin install 필요"
-- **`0.9.0.backup/` 만 존재 / `0.9.0/` 자체가 없음** (reinstall 로 symlink 끊긴 케이스) → "dev mode 가 reinstall 로 끊김. `off` 로 백업 정리 후 `on` 다시 실행"
+- **일반 dir + backup 동시 존재** (reinstall 끊김) → "경고: dev mode 가 reinstall 로 끊긴 것 같습니다. `off` 안내 메시지를 따라 수동 처리."
+- **일반 dir, backup 없음** → "dev mode OFF (정상 cache)"
+- **둘 다 존재하지 않음** → "cache 없음 — plugin install 필요"
 
 ## 7. 검증 단계 (구현 전 사전 단계)
 
@@ -100,16 +104,17 @@ symlink 가 Claude Code plugin 시스템에서 정상 동작하는지 **먼저**
 - 하지만 `<cache_base>/0.9.0.backup/` 는 그대로 남음
 - 사용자 입장에선 "어? dev mode 였는데 왜 코드 변경이 안 보이지?" 라는 혼란
 
-**대응**: `status` 명령이 이 상태 (`0.9.0/` 은 존재하지만 symlink 가 아니고, `0.9.0.backup/` 도 함께 존재) 를 감지하면 명시적 안내:
+**대응**: `status` / `off` 명령이 이 상태 (`0.9.0/` 은 존재하지만 symlink 가 아니고, `0.9.0.backup/` 도 함께 존재) 를 감지하면 **자동 정리하지 않고** 명시적 안내만 한다:
 
 ```
-경고: 이전 dev mode 의 백업 dir 이 남아있습니다.
-plugin reinstall 로 symlink 가 끊긴 것 같습니다.
-조치: ./scripts/dev-mode.sh off    # 백업을 안전하게 제거
-      ./scripts/dev-mode.sh on     # 다시 dev mode 켜기
+경고: dev mode 가 reinstall 로 끊긴 것 같습니다.
+어느 쪽이 truth 인지 스크립트가 판단할 수 없으므로 자동 정리하지 않습니다.
+조치: 어느 쪽이 정상인지 확인 후 수동 처리:
+  - 현재 cache 가 정상이면:  rm -rf <cache_base>/0.9.0.backup
+  - backup 이 정상이면:      rm -rf <cache_base>/0.9.0 && mv <cache_base>/0.9.0.backup <cache_base>/0.9.0
 ```
 
-자동 복구는 하지 않는다 (현재 cache 와 backup 어느 쪽이 truth 인지 스크립트가 판단할 수 없음 — 사용자 의도에 의존).
+자동 복구는 하지 않는다. 부분 실패한 reinstall 이 target 에 partial 상태를 남겨도 backup 이 마지막 known-good 일 수 있으므로, "정상 dir 이 존재한다" 만으로는 truth 를 가릴 수 없다 — 사용자 명시 결정에 의존.
 
 ## 9. 폴백 — symlink 미호환 시
 
@@ -123,14 +128,36 @@ plugin reinstall 로 symlink 가 끊긴 것 같습니다.
 
 ## 10. 안전 장치 요약
 
-| 시나리오 | 동작 |
+### `on`
+
+| 사전 상태 | 동작 |
 |---|---|
-| `on` 인데 이미 dev mode | no-op + 안내 |
-| `off` 인데 이미 정상 mode | no-op + 안내 |
-| `on` 인데 backup dir 충돌 | 에러 + 수동 정리 요청 |
-| `off` 인데 backup 없음 | 에러 + 수동 복구 안내 |
-| cache target 자체 없음 | 에러 + plugin install 안내 |
-| reinstall 로 symlink 끊김 | `status` 감지 + 안내 |
+| 이미 symlink (dev mode) | no-op + 안내, exit 0 |
+| backup dir 이 이미 존재 | 에러 + 수동 정리 안내, exit 1 |
+| cache target 자체 없음 | 에러 + plugin install 안내, exit 1 |
+| 작업 폴더 plugin 경로 없음 | 에러, exit 1 |
+| `mv` 후 `ln -s` 실패 | backup → target rollback + exit 1 |
+
+### `off`
+
+| cache 상태 | 동작 |
+|---|---|
+| 1. target 없음 + backup 만 (인터럽트 잔재) | backup → target 복원, exit 0 |
+| 2. 정상 dir + backup 없음 (이미 OFF) | no-op + 안내, exit 0 |
+| 3. 정상 dir + backup 둘 다 (reinstall 끊김) | **자동 정리 안 함**, 수동 안내 + exit 1 |
+| 4. symlink + backup (정상 dev mode) | symlink 제거 + backup 복원, exit 0 |
+| 5. symlink 만 있고 backup 없음 (이상) | 에러 + 수동 복구 안내, exit 1 |
+| 6. 알 수 없는 상태 | 에러 + `ls -la` 안내, exit 1 |
+
+### `status`
+
+| cache 상태 | 출력 |
+|---|---|
+| target 없음 + backup 만 | "경고: 인터럽트된 on 작업 잔재 감지" |
+| symlink | "dev mode ON" + 가리키는 경로 |
+| 정상 dir + backup 동시 | "경고: reinstall 로 끊김. `off` 안내 따라 수동 처리" |
+| 정상 dir, backup 없음 | "dev mode OFF (정상 cache)" |
+| 둘 다 없음 | 에러: "cache 없음 — plugin install 필요" |
 
 ## 11. 테스트 / 검증 전략
 
