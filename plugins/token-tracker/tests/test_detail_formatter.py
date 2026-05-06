@@ -305,17 +305,21 @@ def test_detail_subagent_cost_uses_sub_model_rate_when_set():
     assert "$1.0000" in child_line
 
 
-def test_detail_unknown_sub_model_alias_uses_parent_rate_for_row_cost():
-    """sub.model이 unknown alias('sonnet')면 행 비용도 silent 0이 아니라 부모 단가."""
+def test_detail_short_alias_sub_model_uses_latest_family_rate_for_row_cost():
+    """v0.11.0 변경 — short alias sub.model 이 family-prefix latest 단가로 청구.
+
+    이전 동작: sub.model="sonnet" → unknown → parent opus rate ($5).
+    신 동작: alias 자동 탐지 → latest sonnet rate ($3) 로 정확 청구.
+    """
     turn = _turn(model="claude-opus-4-7")
     sub = _sub(input_tokens=1_000_000, output_tokens=0,
                cache_creation_tokens=0, cache_read_tokens=0)
-    sub.model = "sonnet"  # unknown alias
+    sub.model = "sonnet"  # short alias → latest sonnet 자동 매핑
     turn.subagents = [sub]
     out = format_detail(_summary([turn]), "ko")
     child_line = next(l for l in out.splitlines() if "└" in l)
-    # opus input rate (v0.7.0 인하) = \$5.0/MTok → \$5.0000 (NOT \$0.0000)
-    assert "$5.0000" in child_line, f"expected parent rate fallback in: {child_line!r}"
+    # latest sonnet input rate = $3.0/MTok → $3.0000 (NOT parent opus $5.0000)
+    assert "$3.0000" in child_line, f"expected latest sonnet rate in: {child_line!r}"
 
 
 def test_detail_formatter_renders_with_5m_1h_fields():
@@ -335,15 +339,30 @@ def test_detail_formatter_renders_with_5m_1h_fields():
     assert "500" in text
 
 
-def test_detail_legend_present_when_sub_model_is_unknown_alias():
-    """sub.model이 unknown alias여도 legend가 표시돼야 한다 (부모 단가 추정 중이므로)."""
+def test_detail_no_legend_when_short_alias_resolves_to_latest_family():
+    """v0.11.0 변경 — short alias 가 정확한 latest family 단가로 청구되므로
+    "부모 단가 추정" legend 가 더 이상 표시되지 않음. legend 는 진짜 unknown
+    (family 도 매칭 안 되는) 케이스에서만 출력."""
     turn = _turn()
     sub = _sub(agent_type="general-purpose")
-    sub.model = "sonnet"  # unknown alias — billing falls back to parent
+    sub.model = "sonnet"  # alias 자동 탐지로 known 처리
+    turn.subagents = [sub]
+    out_ko = format_detail(_summary([turn]), "ko")
+    assert "subagent 비용은 부모 모델 단가로 추정" not in out_ko, (
+        f"alias 가 known 으로 해석되면 legend 안 나와야 함; got:\n{out_ko}"
+    )
+
+
+def test_detail_legend_present_when_sub_model_is_truly_unknown():
+    """진짜 unknown 모델 ('claude-future-99' 같은 family 매칭 안 되는 id) 에서는
+    legend 표시 — parent rate 로 fallback 되었음을 안내."""
+    turn = _turn()
+    sub = _sub(agent_type="general-purpose")
+    sub.model = "claude-future-99"  # family alias 도 매칭 안 됨 → unknown
     turn.subagents = [sub]
     out_ko = format_detail(_summary([turn]), "ko")
     assert "subagent 비용은 부모 모델 단가로 추정" in out_ko, (
-        f"unknown alias should trigger legend; got:\n{out_ko}"
+        f"truly unknown model should trigger legend; got:\n{out_ko}"
     )
 
 

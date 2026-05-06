@@ -229,7 +229,7 @@ def format_detail(summary: Summary, language: str) -> str:
         cost = f"${compute_cost(turn.model, turn):.4f}"
         cells = [
             str(turn.index + 1),
-            turn.model,
+            _short_model_name(turn.model),
             _format_tools(turn.tools_used),
             _fmt_compact_number(turn.input_tokens),
             _fmt_compact_number(turn.cache_creation_5m_tokens + turn.cache_creation_1h_tokens),
