@@ -412,13 +412,12 @@ def test_aggregate_5m_1h_uses_sub_model_rates():
     assert abs(s.total_cost - 2.0) < 1e-6
 
 
-def test_aggregate_unknown_sub_model_short_alias_falls_back_to_parent_rate():
-    """sub.model이 short alias('sonnet' 등 unknown 값)면 silent $0이 아니라 부모 단가.
+def test_aggregate_short_alias_resolves_to_latest_family_rate():
+    """v0.11.0 변경 — short alias 가 family-prefix latest 단가로 정확 청구.
 
-    v0.6.2 CRITICAL 회귀 가드: `Agent(model="sonnet")` dispatch 시 parser가
-    sub.model="sonnet"을 채우면 truthy라 부모 fallback 안 됨 →
-    compute_cost("sonnet", sub) → _resolve_rates 못 찾음 → 0.0 silent return.
-    effective_billing_model로 unknown 키도 부모 단가로 떨어져야 한다.
+    이전 동작 (v0.10.0 까지): `Agent(model="sonnet")` → unknown → parent rate fallback.
+    신 동작: alias 자동 탐지 → claude-sonnet-{latest} 단가 ($3 input, parent opus 의 $5 가 아님).
+    silent $0 는 여전히 회귀 — 정확 단가가 청구되어야 한다.
     """
     parent = _mk(
         model="claude-opus-4-7",
@@ -426,9 +425,9 @@ def test_aggregate_unknown_sub_model_short_alias_falls_back_to_parent_rate():
     )
     parent.agent_tool_use_ids = ["toolu_a"]
     sub = _mk_sub(tool_use_id="toolu_a", input_tokens=1_000_000)
-    sub.model = "sonnet"  # unknown alias — not in PRICING table
+    sub.model = "sonnet"  # short alias — alias 자동 탐지로 latest sonnet 매핑
     s = aggregator.aggregate([parent], elapsed=0.0, subagents=[sub])
-    # Expected fallback: 1M * $5 / 1M = $5.0 (opus 4.7 신단가 input, NOT 0.0)
-    assert math.isclose(s.total_cost, 5.0, rel_tol=1e-6), (
-        f"unknown alias should fall back to parent rate, got cost={s.total_cost}"
+    # Expected: 1M * $3 / 1M = $3.0 (latest sonnet input rate, NOT parent opus $5)
+    assert math.isclose(s.total_cost, 3.0, rel_tol=1e-6), (
+        f"short alias should resolve to latest sonnet rate ($3), got cost={s.total_cost}"
     )

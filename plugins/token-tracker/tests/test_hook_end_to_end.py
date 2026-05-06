@@ -1278,12 +1278,13 @@ def test_stop_emits_with_verbose_table_when_async_done(tmp_path):
     )
 
 
-def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
-    """v0.6.2 CRITICAL 회귀 가드.
+def test_e2e_sub_with_short_alias_resolves_to_latest_family_rate(tmp_path):
+    """v0.11.0 변경 회귀 가드.
 
-    풀체인: 메인 jsonl Agent tool_use input.model="sonnet" (unknown alias) +
-    completed tool_result. on_stop이 fg_sub.model="sonnet"으로 채우고,
-    aggregator/formatter가 silent $0이 아니라 부모(opus) 단가로 fallback해야 한다.
+    풀체인: 메인 jsonl Agent tool_use input.model="sonnet" (short alias) +
+    completed tool_result. on_stop 이 fg_sub.model="sonnet" 으로 채우고,
+    aggregator/formatter 가 alias 자동 탐지로 latest sonnet 단가 ($3) 청구.
+    이전 (v0.10.0): parent opus rate ($5) fallback. 신: sonnet rate ($3).
     """
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -1371,10 +1372,12 @@ def test_e2e_sub_with_short_alias_falls_back_to_parent_model_rate(tmp_path):
     m = re.search(r"\$([0-9]+\.[0-9]+)", msg)
     assert m, f"expected $cost in output, got: {msg!r}"
     cost = float(m.group(1))
-    # Expected: 1M sub input * opus 4.7 rate ($5/MTok) = $5.0 (NOT $0.0 silent)
-    assert cost > 4.5, (
-        f"sub with unknown alias 'sonnet' should bill at parent (opus 4.7) rate "
-        f"(~$5.0), got ${cost} in: {msg!r}"
+    # Expected: 1M sub input * latest sonnet rate ($3/MTok) = $3.0
+    # alias 자동 탐지가 sonnet → claude-sonnet-{latest} 매핑 → 정확 단가 청구.
+    # 이전 동작 (parent opus $5) 또는 silent $0 모두 회귀.
+    assert 2.5 < cost < 3.5, (
+        f"sub with short alias 'sonnet' should bill at latest sonnet rate "
+        f"(~$3.0), got ${cost} in: {msg!r}"
     )
 
 

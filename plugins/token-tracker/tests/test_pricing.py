@@ -130,15 +130,21 @@ def test_effective_billing_model_falls_back_when_sub_model_empty():
     assert pricing.effective_billing_model("", "claude-opus-4-7") == "claude-opus-4-7"
 
 
-def test_effective_billing_model_falls_back_when_sub_model_unknown_alias():
-    """sub.model이 short alias 같은 unknown 값이면 silent $0이 아니라 부모 단가로 fallback.
+def test_effective_billing_model_resolves_short_alias_to_latest_family_member():
+    """v0.11.0 변경 — short alias 가 family-prefix latest 로 자동 매핑되어 정확 단가 청구.
 
-    이게 v0.6.2의 silent $0 회귀 핵심 가드 — `Agent(model="sonnet")` 같은 alias는
-    pricing 표에 없으므로 truthy하더라도 부모 단가로 떨어져야 한다.
+    이전 동작 (v0.10.0 까지): `Agent(model="sonnet")` → unknown → 부모 모델 단가 fallback.
+    신 동작: alias 자동 탐지 → claude-sonnet-{latest} 단가로 정확 청구.
+    parent fallback 은 빈 문자열이거나 family 매칭 실패 시에만.
     """
-    assert pricing.effective_billing_model("sonnet", "claude-opus-4-7") == "claude-opus-4-7"
-    assert pricing.effective_billing_model("haiku", "claude-opus-4-7") == "claude-opus-4-7"
-    assert pricing.effective_billing_model("opus", "claude-opus-4-7") == "claude-opus-4-7"
+    # alias 가 known 으로 인식되면 sub_model 그대로 반환 (fallback 안 함)
+    assert pricing.effective_billing_model("sonnet", "claude-opus-4-7") == "sonnet"
+    assert pricing.effective_billing_model("haiku", "claude-opus-4-7") == "haiku"
+    assert pricing.effective_billing_model("opus", "claude-opus-4-7") == "opus"
+    # is_known_model 도 true 여야 함
+    assert pricing.is_known_model("sonnet")
+    assert pricing.is_known_model("haiku")
+    assert pricing.is_known_model("opus")
 
 
 def test_compute_cost_accepts_subagent_usage():
