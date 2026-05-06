@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from lib import pricing
 from lib.parser import SubagentUsage, TurnUsage
 
@@ -166,34 +168,69 @@ def test_compute_cost_accepts_subagent_usage():
     assert math.isclose(sub_cost, 18.5, rel_tol=1e-9)
 
 
-def test_pricing_opus_4_7_all_rates_absolute():
-    """Opus 4.7 단가 5개 절대값 가드 — 옛 단가($15/$75/$18.75/$1.5) 회귀 방지.
-    단가 변경 시 같이 갱신 필요."""
-    from lib.pricing import PRICING
-    p = PRICING["claude-opus-4-7"]
-    assert p["input"] == 5.0
-    assert p["output"] == 25.0
-    assert p["cache_creation_5m"] == 6.25
-    assert p["cache_creation_1h"] == 10.0
-    assert p["cache_read"] == 0.50
+# ──────────────────────────────────────────────────────────────────────────
+# 모델별 단가 절대값 가드 — pricing_data.json 회귀 방지.
+# tier 단가표를 한 곳(_RATE_TIERS)에서 정의하고 (model_id, tier) 매핑만
+# parametrize 로 늘려쓴다. 단가 변경 시 _RATE_TIERS 한 곳만 갱신.
+# ──────────────────────────────────────────────────────────────────────────
+
+_RATE_TIERS: dict[str, dict[str, float]] = {
+    # Opus 4.5 부터 적용된 신단가 (4.5 / 4.6 / 4.7 공통)
+    "opus_new": {
+        "input": 5.0, "output": 25.0,
+        "cache_creation_5m": 6.25, "cache_creation_1h": 10.0,
+        "cache_read": 0.50,
+    },
+    # Opus 4.0 / 4.1 옛 단가
+    "opus_old": {
+        "input": 15.0, "output": 75.0,
+        "cache_creation_5m": 18.75, "cache_creation_1h": 30.0,
+        "cache_read": 1.50,
+    },
+    # Sonnet 4.0 / 4.5 / 4.6 공통
+    "sonnet": {
+        "input": 3.0, "output": 15.0,
+        "cache_creation_5m": 3.75, "cache_creation_1h": 6.0,
+        "cache_read": 0.30,
+    },
+    "haiku_4_5": {
+        "input": 1.0, "output": 5.0,
+        "cache_creation_5m": 1.25, "cache_creation_1h": 2.0,
+        "cache_read": 0.10,
+    },
+    "haiku_3_5": {
+        "input": 0.80, "output": 4.0,
+        "cache_creation_5m": 1.0, "cache_creation_1h": 1.6,
+        "cache_read": 0.08,
+    },
+}
+
+_MODEL_TIER_MAP: list[tuple[str, str]] = [
+    ("claude-opus-4-7",    "opus_new"),
+    ("claude-opus-4-6",    "opus_new"),
+    ("claude-opus-4-5",    "opus_new"),
+    ("claude-opus-4-1",    "opus_old"),
+    ("claude-opus-4",      "opus_old"),
+    ("claude-sonnet-4-6",  "sonnet"),
+    ("claude-sonnet-4-5",  "sonnet"),
+    ("claude-sonnet-4",    "sonnet"),
+    ("claude-haiku-4-5",   "haiku_4_5"),
+    ("claude-haiku-3-5",   "haiku_3_5"),
+]
 
 
-def test_pricing_sonnet_4_6_1h_is_6_dollars_per_mtok():
-    from lib.pricing import PRICING
-    assert PRICING["claude-sonnet-4-6"]["cache_creation_1h"] == 6.0
-    assert PRICING["claude-sonnet-4-6"]["cache_creation_5m"] == 3.75
-
-
-def test_pricing_haiku_4_5_1h_is_2_dollars_per_mtok():
-    from lib.pricing import PRICING
-    assert PRICING["claude-haiku-4-5"]["cache_creation_1h"] == 2.0
-    assert PRICING["claude-haiku-4-5"]["cache_creation_5m"] == 1.25
+@pytest.mark.parametrize("model_id,tier", _MODEL_TIER_MAP)
+def test_pricing_absolute_rates_per_model(model_id: str, tier: str):
+    """모든 등록 모델의 5개 단가 절대값 가드. 단가 변경 시 _RATE_TIERS 갱신 필요."""
+    expected = _RATE_TIERS[tier]
+    p = pricing.PRICING[model_id]
+    for key, value in expected.items():
+        assert p[key] == value, f"{model_id}.{key}: got {p[key]}, expected {value}"
 
 
 def test_pricing_1h_more_expensive_than_5m_for_all_models():
     """tier 분리 누락 회귀 가드 — 1h가 5m보다 비싸야 정상."""
-    from lib.pricing import PRICING
-    for model, rates in PRICING.items():
+    for model, rates in pricing.PRICING.items():
         assert rates["cache_creation_1h"] > rates["cache_creation_5m"], (
             f"{model}: 1h {rates['cache_creation_1h']} <= 5m {rates['cache_creation_5m']}"
         )
@@ -237,3 +274,103 @@ def test_compute_cost_combines_5m_and_1h_correctly():
     cost = compute_cost("claude-opus-4-7", usage)
     expected = 5.0 + 25.0 + 6.25 + 10.0 + 0.50
     assert abs(cost - expected) < 1e-6
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# prefix match 회귀 가드 — Opus 4.0 키 추가로 4.x 가 4.0 단가로 잘못 매치되면 안 됨
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_prefix_match_opus_4_x_not_billed_as_opus_4_0():
+    """`claude-opus-4-7-20260101` 같은 dated id 가 `claude-opus-4` (4.0 단가) 로
+    잘못 매치되면 안 됨. longest-prefix 가 4.7/4.6/4.5/4.1 을 우선 매치해야 함."""
+    one_mtok_input = TurnUsage(
+        model="claude-opus-4-7-20260101",
+        input_tokens=1_000_000,
+        output_tokens=0,
+    )
+    # Opus 4.7 신단가 = $5/MTok input. 만약 4.0 ($15) 으로 매치되면 fail.
+    assert math.isclose(
+        pricing.compute_cost("claude-opus-4-7-20260101", one_mtok_input), 5.0, rel_tol=1e-6
+    )
+
+
+def test_prefix_match_opus_4_0_exact():
+    """`claude-opus-4` 단독 id 는 4.0 단가 ($15) 매치."""
+    u = TurnUsage(model="claude-opus-4", input_tokens=1_000_000, output_tokens=0)
+    assert math.isclose(pricing.compute_cost("claude-opus-4", u), 15.0, rel_tol=1e-6)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# pricing_data.json 로드 가드 — 파일 형태 / 키 누락 시 fail-fast
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_pricing_data_json_exists_and_loads():
+    """배포 사고 회귀 가드 — 파일 존재 + import 시 PRICING 채워짐."""
+    assert pricing._PRICING_DATA_PATH.exists()
+    # _MODEL_TIER_MAP 의 모든 모델이 PRICING 에 등록되어 있어야 함
+    for model_id, _ in _MODEL_TIER_MAP:
+        assert model_id in pricing.PRICING
+
+
+def test_pricing_data_json_load_rejects_empty_models(tmp_path, monkeypatch):
+    """models 가 빈 dict 면 즉시 RuntimeError."""
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"models": {}}', encoding="utf-8")
+    monkeypatch.setattr(pricing, "_PRICING_DATA_PATH", bad)
+    with pytest.raises(RuntimeError, match="empty"):
+        pricing._load_pricing()
+
+
+def test_pricing_data_json_load_rejects_missing_models_key(tmp_path, monkeypatch):
+    """models 키 자체가 없으면 RuntimeError."""
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"fetched": "x"}', encoding="utf-8")
+    monkeypatch.setattr(pricing, "_PRICING_DATA_PATH", bad)
+    with pytest.raises(RuntimeError, match="missing or not an object"):
+        pricing._load_pricing()
+
+
+def test_pricing_data_json_load_rejects_models_not_dict(tmp_path, monkeypatch):
+    """models 가 dict 아닌 타입 (list 등) 이면 RuntimeError."""
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"models": []}', encoding="utf-8")
+    monkeypatch.setattr(pricing, "_PRICING_DATA_PATH", bad)
+    with pytest.raises(RuntimeError, match="missing or not an object"):
+        pricing._load_pricing()
+
+
+def test_pricing_data_json_load_rejects_top_level_not_object(tmp_path, monkeypatch):
+    """top-level 이 dict 아니면 RuntimeError."""
+    bad = tmp_path / "bad.json"
+    bad.write_text('[1, 2, 3]', encoding="utf-8")
+    monkeypatch.setattr(pricing, "_PRICING_DATA_PATH", bad)
+    with pytest.raises(RuntimeError, match="top-level"):
+        pricing._load_pricing()
+
+
+def test_pricing_data_json_load_propagates_json_decode_error(tmp_path, monkeypatch):
+    """JSON 파싱 실패는 원본 예외 자연 전파 (fail-fast 정책)."""
+    bad = tmp_path / "bad.json"
+    bad.write_text('{not valid json', encoding="utf-8")
+    monkeypatch.setattr(pricing, "_PRICING_DATA_PATH", bad)
+    import json as _json
+    with pytest.raises(_json.JSONDecodeError):
+        pricing._load_pricing()
+
+
+def test_pricing_data_json_load_propagates_file_not_found(tmp_path, monkeypatch):
+    """파일 누락은 원본 FileNotFoundError 자연 전파 (fail-fast 정책)."""
+    monkeypatch.setattr(pricing, "_PRICING_DATA_PATH", tmp_path / "missing.json")
+    with pytest.raises(FileNotFoundError):
+        pricing._load_pricing()
+
+
+def test_pricing_data_json_all_models_have_required_keys():
+    """모든 row 가 5개 단가 키 (input/output/5m/1h/read) 를 갖고 있어야 함.
+    누락 row 가 silent KeyError 로 새벽 4시 hook crash 내는 회귀 방지."""
+    required = {"input", "output", "cache_creation_5m", "cache_creation_1h", "cache_read"}
+    for model, rates in pricing.PRICING.items():
+        missing = required - rates.keys()
+        assert not missing, f"{model}: missing keys {missing}"

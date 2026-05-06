@@ -73,7 +73,8 @@ Use this plugin's output for **optimization signal** (did caching improve? is th
 - `docs/superpowers/specs/` — design specs (Phase 1 overall + Phase 2-B `/token-detail`)
 - `docs/superpowers/plans/` — implementation plans per phase
 - `docs/handoff/` — cross-session handoff notes
-- `plugins/token-tracker/lib/pricing.py` — static rate card (update when Anthropic prices change)
+- `plugins/token-tracker/lib/pricing_data.json` — 단가 표 (Anthropic 단가 변경 시 이 파일의 row 만 수정 + `fetched` 날짜 갱신)
+- `plugins/token-tracker/lib/pricing.py` — JSON 로드 + cost 계산 로직 (`compute_cost`, prefix-match resolver)
 - `plugins/token-tracker/hooks/on_stop.py` — aggregation + output
 - `plugins/token-tracker/lib/i18n/` — translated strings for ko/en
 
