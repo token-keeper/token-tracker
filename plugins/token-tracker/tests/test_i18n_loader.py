@@ -22,7 +22,7 @@ def test_all_expected_keys_present_both_languages():
     expected_keys = {
         "header_title", "header_total",
         "col_index", "col_model", "col_tools",
-        "col_input", "col_cc", "col_cr",
+        "col_input_meta", "col_cc", "col_cr",
         "col_output", "col_cost", "col_time",
         "legend",
         "err_no_state", "err_parse", "err_unsupported_schema", "err_empty_turns",

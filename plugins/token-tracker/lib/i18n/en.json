@@ -4,7 +4,7 @@
   "col_index": "#",
   "col_model": "model",
   "col_tools": "tools",
-  "col_input": "input",
+  "col_input_meta": "input-meta",
   "col_cc": "cc",
   "col_cr": "cr",
   "col_output": "output",
