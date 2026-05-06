@@ -1,46 +1,51 @@
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
 from lib.parser import TurnUsage
 
 
-# Prices in USD per 1,000,000 tokens.
-# Source: https://platform.claude.com/docs/en/about-claude/pricing
-# Fetched: 2026-05-03
-# 회귀 fix: Opus 4.7은 4.5부터 단가가 1/3로 인하됐는데 우리는 옛 단가($15)를 박아둠.
+# Pricing data lives in pricing_data.json (sibling of this file).
+# 분리 이유: 단가 변경마다 코드 PR 대신 1줄 data diff 로 끝내기 위함.
+# 형식: { "fetched": "YYYY-MM-DD", "source": "...", "models": { "<model_id>": {...} } }
 #
-# 가정:
-# - prompt cache write는 5m / 1h 두 tier만 존재 (Anthropic 2년간 두 tier 유지).
-#   30m/4h 등 새 tier 추가 시 PRICING 키 + parser + summary_store v4 bump 필요.
-# - cache_read는 모든 tier 단가 동일 (5m/1h 모두 동일 cache_read 단가).
-#   향후 분리되면 spec/회귀 재검토.
-# - 단가 변경 시 tests/test_pricing.py의 절대값 회귀 가드 테스트
-#   (test_pricing_opus_4_7_all_rates_absolute, test_pricing_sonnet_4_6_1h_..., test_pricing_haiku_4_5_1h_...)
-#   도 같이 갱신. 안 갱신하면 정당한 단가 변경이 회귀로 오인됨.
-PRICING: dict[str, dict[str, float]] = {
-    "claude-opus-4-7": {
-        "input": 5.0,
-        "output": 25.0,
-        "cache_creation_5m": 6.25,
-        "cache_creation_1h": 10.0,
-        "cache_read": 0.50,
-    },
-    "claude-sonnet-4-6": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_creation_5m": 3.75,
-        "cache_creation_1h": 6.0,
-        "cache_read": 0.30,
-    },
-    "claude-haiku-4-5": {
-        "input": 1.0,
-        "output": 5.0,
-        "cache_creation_5m": 1.25,
-        "cache_creation_1h": 2.0,
-        "cache_read": 0.10,
-    },
-}
+# 가정 (옛 dict 시절과 동일):
+# - prompt cache write 는 5m / 1h 두 tier 만 존재. 새 tier 추가 시 JSON 키 + parser
+#   + summary_store v4 bump 필요.
+# - cache_read 는 모든 tier 단가 동일. 향후 분리되면 spec/회귀 재검토.
+# - 단가 변경 시 tests/test_pricing.py 의 절대값 가드 테스트도 함께 갱신.
+_PRICING_DATA_PATH = Path(__file__).parent / "pricing_data.json"
+
+
+def _load_pricing() -> dict[str, dict[str, float]]:
+    """Load pricing table from pricing_data.json at module import time.
+
+    fail-fast 정책:
+    - 파일 없음 / JSON 파싱 실패: 원본 예외 (FileNotFoundError, json.JSONDecodeError) 자연 전파.
+      hook process import 가 실패하며 stderr 에 traceback 남음 → 배포 사고 즉시 인지.
+    - top-level 이 dict 아님 / models 키 누락 / models 가 dict 아님 / 빈 dict:
+      RuntimeError 로 케이스별 메시지 변환.
+    """
+    raw = json.loads(_PRICING_DATA_PATH.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError(
+            f"pricing_data.json: top-level must be an object ({_PRICING_DATA_PATH})"
+        )
+    models = raw.get("models")
+    if not isinstance(models, dict):
+        raise RuntimeError(
+            f"pricing_data.json: 'models' key missing or not an object ({_PRICING_DATA_PATH})"
+        )
+    if not models:
+        raise RuntimeError(
+            f"pricing_data.json: 'models' is empty ({_PRICING_DATA_PATH})"
+        )
+    return models
+
+
+PRICING: dict[str, dict[str, float]] = _load_pricing()
 
 
 _warned_unknown_models: set[str] = set()
