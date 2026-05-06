@@ -124,7 +124,7 @@ state/pricing_data.json 에 write + state/pricing_meta.json 갱신
 - ~~C. pricing 데이터 분리~~ (해결됨 — v0.10.0)
 - ~~D. legacy 모델 단가~~ (해결됨 — v0.10.0)
 - ~~새 후보 1번 (alias)~~ (해결됨 — v0.11.0)
-- **E. context bloat 분석 시각화** — 큰 작업, v0.12.0+ 후보. 사용자 평소 원하던 핵심 기능
+- **E. context bloat 분석 시각화** — **보류 (2026-05-07 사용자 결정)**. 검토 결과 status line 이 이미 핵심 정보 (`240k/1M (24%)`) 노출 중 → 추가 가치는 토큰 종류별 breakdown / 시간 흐름 추이 / 세션 비교 정도이지만 사용자 pain point 미명확. brainstorm 1단계 (pain point 확인) 에서 "지금 당장은 필요 없음" 으로 종결. 추측성 기능 (YAGNI) 위험. 다시 검토할 때는 사용자가 실제 불편 상황 명시하면 시작
 - B. CHANGELOG.md 도입 — 낮음 (핸드오프 doc 으로 충분)
 - F. SQLite 도입 — 보류
 - G. 200k+ tier 모니터링 — 가치 0
@@ -231,8 +231,9 @@ state/pricing_data.json 에 write + state/pricing_meta.json 갱신
 5. 머지 명시 승인 후 → main pull → 다음 작업
 
 사용자가 "다음 작업 바로 진행" 이라고 하면:
-- **E (context bloat 시각화)** 가 가장 큰 가치 후보 — brainstorm 부터 시작 (사용자가 평소 원하던 핵심)
-- 또는 **H (MAJOR 4건 follow-up 정리)** — 정리 작업, ~125줄. 후순위
+- ~~**E (context bloat 시각화)**~~ — 보류 (위 4절 참조). status line 중복 우려로 사용자가 "지금은 필요 없음" 결정
+- **H (MAJOR 4건 follow-up 정리)** — 정리 작업, ~125줄. 실증 위험 0
 - 새 후보 (stale 가드 / 응답 크기 상한 등) 는 작은 작업, 한 PR 안에 묶기 가능
+- **사용자가 실제 불편 상황 알려주는 것** 이 가장 가치 큼 — 추측성 기능보다 실제 pain point 우선
 
-기능 / UX 작업 비중이 정리 작업보다 커진 시점. v0.12.0 부터는 큰 기능 작업이 자연스러움.
+핵심 인프라 (pricing 정확도 / dev-mode / 자동 갱신) 는 안정. 다음 큰 기능은 사용자 불편 명시 후 시작.

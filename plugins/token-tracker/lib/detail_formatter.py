@@ -47,9 +47,9 @@ class Column:
 
 _COLUMNS = [
     Column("col_index", 3, "right"),
-    Column("col_model", 22, "left"),
-    Column("col_tools", 20, "left"),
-    Column("col_input", 8, "right"),
+    Column("col_model", 15, "left"),
+    Column("col_tools", 25, "left"),
+    Column("col_input_meta", 10, "right"),
     Column("col_cc", 6, "right"),
     Column("col_cr", 7, "right"),
     Column("col_output", 8, "right"),
@@ -194,7 +194,7 @@ def format_detail(summary: Summary, language: str) -> str:
     model_default_width = _COLUMNS[_MODEL_COL_INDEX].width
     candidates: list[str] = [s["col_model"]]
     for turn in summary.turns:
-        candidates.append(turn.model)
+        candidates.append(_short_model_name(turn.model))
         for sub in turn.subagents:
             candidates.append(_sub_label(sub, sub_prefix))
     needed_width = max(visual_width(c) for c in candidates)
