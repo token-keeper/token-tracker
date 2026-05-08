@@ -1,6 +1,6 @@
 {
   "header_title": "Last request detail",
-  "header_total": "total {cost} | {tokens} toks | cache {rate} | {elapsed}",
+  "header_total": "total {cost} | {tokens} toks | cache {rate} | {elapsed} | {turns} turns",
   "col_index": "#",
   "col_model": "model",
   "col_tools": "tools",

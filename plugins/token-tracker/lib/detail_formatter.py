@@ -185,6 +185,7 @@ def format_detail(summary: Summary, language: str) -> str:
     header_line = s["header_total"].format(
         cost=cost_str, tokens=f"{total_tokens:,}",
         rate=cache_rate, elapsed=elapsed,
+        turns=len(summary.turns),
     )
 
     sub_prefix = s["subagent_row_prefix"]

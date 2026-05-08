@@ -1,6 +1,6 @@
 {
   "header_title": "직전 request 상세",
-  "header_total": "총 비용 {cost} | {tokens} toks | cache {rate} | {elapsed}",
+  "header_total": "총 비용 {cost} | {tokens} toks | cache {rate} | {elapsed} | {turns} turns",
   "col_index": "#",
   "col_model": "모델",
   "col_tools": "툴",

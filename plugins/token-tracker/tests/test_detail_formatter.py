@@ -419,3 +419,12 @@ def test_format_detail_uses_minute_format_for_long_elapsed():
     out = format_detail(s, "ko")
     assert "2m 5s" in out
     assert "125.0s" not in out
+
+
+def test_format_detail_header_includes_turn_count():
+    turns = [_turn(index=0, message_id="a"), _turn(index=1, message_id="b"),
+             _turn(index=2, message_id="c"), _turn(index=3, message_id="d")]
+    out = format_detail(_summary(turns), "ko")
+    assert "4 turns" in out
+    out_en = format_detail(_summary(turns), "en")
+    assert "4 turns" in out_en
