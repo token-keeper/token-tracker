@@ -237,3 +237,27 @@ state/pricing_data.json 에 write + state/pricing_meta.json 갱신
 - **사용자가 실제 불편 상황 알려주는 것** 이 가장 가치 큼 — 추측성 기능보다 실제 pain point 우선
 
 핵심 인프라 (pricing 정확도 / dev-mode / 자동 갱신) 는 안정. 다음 큰 기능은 사용자 불편 명시 후 시작.
+
+---
+
+## 9. 검증된 Claude Code 한계 (2026-05-08)
+
+다음 세션에서 같은 디버깅 반복하지 않도록 정리.
+
+### 9.1 Stop hook prefix `Stop says:` 변경 불가
+- `systemMessage` / `decision` / `reason` / `stopReason` / `hookSpecificOutput.additionalContext` 모두 동일 prefix 강제
+- stdout plain text → 무시 (JSON 만 처리)
+- stderr (exit 0) → 표시 안 됨
+- `hookSpecificOutput` 은 Stop event 미지원 (schema 위반)
+- 검증 4 case (A/B/C/D) 모두 실패 — Claude Code 자체 동작
+- 우회 불가. `/feedback` 만 가능
+
+### 9.2 ESC interrupt 시 systemMessage 표시 차단
+- Stop hook 은 ESC 시에도 정상 발화 (`hook_event_name: "Stop"`, `stop_hook_active: false`)
+- token-tracker 의 `_emit` 까지 정상 도달, systemMessage 본문도 정상 생성 (디버그 로그로 검증 완료)
+- 그러나 Claude Code 가 ESC interrupt 후 systemMessage 표시를 client 단에서 차단
+- StopFailure hook 별도 등록도 시도 — ESC 시 Stop 만 발화하고 StopFailure 는 발화 안 함 (다른 시나리오용으로 추정)
+- token-tracker 만으로 fix 불가. `/feedback` 만 가능
+
+### 9.3 hook 종류 (28개) — claude-code-guide 답
+SessionStart, Setup, SessionEnd, UserPromptSubmit, UserPromptExpansion, Stop, StopFailure, PreToolUse, PostToolUse, PostToolUseFailure, PostToolBatch, PermissionRequest, PermissionDenied, SubagentStart, SubagentStop, TaskCreated, TaskCompleted, TeammateIdle, Notification, InstructionsLoaded, ConfigChange, CwdChanged, FileChanged, PreCompact, PostCompact, WorktreeCreate, WorktreeRemove, Elicitation, ElicitationResult
