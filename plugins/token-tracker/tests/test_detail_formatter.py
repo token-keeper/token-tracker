@@ -411,3 +411,11 @@ def test_format_detail_uses_compact_for_large_cache_creation():
     assert "421.2K" in out  # adaptive precision (was "421...")
     assert "15.53K" in out  # cache_read_tokens
     assert "421..." not in out  # truncation gone
+
+
+def test_format_detail_uses_minute_format_for_long_elapsed():
+    s = _summary([_turn()])
+    s.total_elapsed = 125.0
+    out = format_detail(s, "ko")
+    assert "2m 5s" in out
+    assert "125.0s" not in out

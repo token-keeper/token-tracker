@@ -5,12 +5,23 @@ from lib.aggregator import Summary
 
 _MESSAGES = {
     "ko": {
-        "summary": "비용 ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed:.1f}s",
+        "summary": "비용 ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed}",
     },
     "en": {
-        "summary": "cost ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed:.1f}s",
+        "summary": "cost ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed}",
     },
 }
+
+
+def format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    rem_int = int(round(seconds - minutes * 60))
+    if rem_int == 60:
+        minutes += 1
+        rem_int = 0
+    return f"{minutes}m {rem_int}s"
 
 
 def _select_lang(lang: str) -> str:
@@ -25,5 +36,5 @@ def format_summary(summary: Summary, lang: str) -> str:
         cost=summary.total_cost,
         tokens=total_tokens,
         cache=cache_pct,
-        elapsed=summary.total_elapsed,
+        elapsed=format_elapsed(summary.total_elapsed),
     )

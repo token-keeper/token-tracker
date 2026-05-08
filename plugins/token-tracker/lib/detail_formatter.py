@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, replace
 
 from lib.aggregator import Summary
+from lib.formatter import format_elapsed
 from lib.i18n_loader import load_strings
 from lib.parser import SubagentUsage, TurnUsage
 from lib.pricing import compute_cost, effective_billing_model, is_known_model
@@ -167,7 +168,7 @@ def _sub_label(sub: SubagentUsage, prefix: str) -> str:
 
 def _sub_time_str(sub: SubagentUsage) -> str:
     if sub.total_duration_ms and sub.total_duration_ms > 0:
-        return f"{sub.total_duration_ms / 1000:.1f}s"
+        return format_elapsed(sub.total_duration_ms / 1000)
     return "-"
 
 
@@ -180,7 +181,7 @@ def format_detail(summary: Summary, language: str) -> str:
     cost_str = f"${summary.total_cost:.4f}"
     total_tokens = summary.total_input_tokens + summary.total_output_tokens
     cache_rate = f"{int(round(summary.cache_hit_rate * 100))}%"
-    elapsed = f"{summary.total_elapsed:.1f}s"
+    elapsed = format_elapsed(summary.total_elapsed)
     header_line = s["header_total"].format(
         cost=cost_str, tokens=f"{total_tokens:,}",
         rate=cache_rate, elapsed=elapsed,
@@ -222,7 +223,7 @@ def format_detail(summary: Summary, language: str) -> str:
     for i, turn in enumerate(summary.turns):
         next_turn = summary.turns[i + 1] if i + 1 < len(summary.turns) else None
         t_sec = _turn_time(turn, next_turn, prior_sum, summary.total_elapsed)
-        t_str = f"{t_sec:.1f}s" if t_sec is not None else "?"
+        t_str = format_elapsed(t_sec) if t_sec is not None else "?"
         if t_sec is not None:
             prior_sum += t_sec
 
