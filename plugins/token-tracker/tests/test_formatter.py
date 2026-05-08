@@ -71,3 +71,21 @@ def test_summary_uses_minute_format_when_over_60s():
     out = formatter.format_summary(s, "ko")
     assert "2m 5s" in out
     assert "125.0s" not in out  # ensure raw seconds format isn't leaked
+
+
+def test_summary_includes_turn_count():
+    s = _sum(turns=[None] * 4)  # formatter only reads len(turns)
+    out = formatter.format_summary(s, "ko")
+    assert "4 turns" in out
+
+
+def test_summary_turn_count_zero_when_empty():
+    s = _sum()
+    out = formatter.format_summary(s, "ko")
+    assert "0 turns" in out
+
+
+def test_summary_turn_count_singular_uses_same_label():
+    s = _sum(turns=[None])
+    out = formatter.format_summary(s, "ko")
+    assert "1 turns" in out  # KISS: singular label not differentiated

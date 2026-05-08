@@ -5,10 +5,10 @@ from lib.aggregator import Summary
 
 _MESSAGES = {
     "ko": {
-        "summary": "비용 ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed}",
+        "summary": "비용 ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed} · {turns} turns",
     },
     "en": {
-        "summary": "cost ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed}",
+        "summary": "cost ${cost:.4f} · {tokens:,} toks · cache {cache}% · {elapsed} · {turns} turns",
     },
 }
 
@@ -37,4 +37,5 @@ def format_summary(summary: Summary, lang: str) -> str:
         tokens=total_tokens,
         cache=cache_pct,
         elapsed=format_elapsed(summary.total_elapsed),
+        turns=len(summary.turns),
     )
