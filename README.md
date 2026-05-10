@@ -1,158 +1,162 @@
-# token-tracker
+<p align="center">
+  <img src="assets/banner.png" alt="Token Tracker" width="420">
+</p>
 
-Claude Code plugin: display per-request token cost on every `Stop`.
+<p align="center">
+  <strong>English</strong> · <a href="README.ko.md">한국어</a>
+</p>
+
+# Token Tracker
+
+Claude Code plugin that displays per-request token cost on every `Stop`.
 
 ## What it shows
 
 After every assistant response, a one-line summary appears below it:
 
 ```
-비용 $0.0180 · 1,546 toks · cache 85% · 12.3s
+cost $0.0180 · 1,546 toks · cache 85% · 12.3s
 ```
 
-- **비용**: retail pay-per-token cost estimate for just this request.
+- **cost**: retail pay-per-token cost estimate for just this request.
 - **toks**: total (input + output + cache_read) tokens consumed.
 - **cache**: `cache_read / total_input` hit rate.
 - **s**: wall-clock seconds from `UserPromptSubmit` to `Stop`.
 
-## Detail view — 두 가지 방식
+## Detail view — two ways
 
-### 방식 1 (추천): verbose 모드 — 매 응답마다 자동 출력
+### Option 1 (recommended): verbose mode — auto-printed every response
 
-`plugins/token-tracker/config.json`에서 `"verbose": true`로 바꾸면 Stop hook이 매 응답 끝에 **한 줄 요약 + turn별 상세 표**를 함께 찍습니다.
+Set `"verbose": true` in `plugins/token-tracker/config.json` and the Stop hook will print the one-line summary plus a per-turn detail table at the end of every response:
 
 ```json
 {
-  "language": "ko",
+  "language": "en",
   "verbose": true
 }
 ```
 
-일회성 디버깅엔 환경변수 쪽이 편합니다:
+For one-off debugging, the env var is handier:
 
 ```bash
 export TOKEN_TRACKER_VERBOSE=1
 ```
 
-이 방식은 Hook이 `systemMessage`로 직접 출력하므로 **LLM을 거치지 않아 결정론적**이고 토큰 비용 0.
+This path emits via `systemMessage` directly from the hook, so it's **deterministic (no LLM in the loop) and costs zero tokens**.
 
-### 방식 2 (주문형): `/token-detail` slash skill
+### Option 2 (on-demand): `/token-detail` slash skill
 
-직전 request의 turn별 정보를 **원할 때만** 한 번 조회:
+Inspect the most recent request's per-turn breakdown when you want it:
 
 ```
 /token-detail
 ```
 
-출력 예시:
+Example output:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 직전 request 상세
- 총 비용 $0.0180 | 1,546 toks | cache 85% | 12.3s
+ Last request detail
+ total $0.0180 | 1,546 toks | cache 85% | 12.3s
 
-   #  모델                    툴                 input    cc       cr    output     비용      시간
+   #  model                   tools              input    cc       cr    output     cost      time
    1  opus-4-7[1m]            Read×3,Edit×1      120     400      800       450    $0.008     2.1s
    2  opus-4-7[1m]            —                   95       0    1,200       320    $0.006     3.5s
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 범례: cc=cache_creation, cr=cache_read
+ Legend: cc=cache_creation, cr=cache_read
 ```
 
-skill은 `disable-model-invocation: true`로 등록돼 있어 Claude가 자동으로 호출하지 않고, 사용자가 `/token-detail`을 직접 입력해야만 실행됩니다. 내부적으로는 script 출력 + minimal SKILL.md 본문이라 호출당 토큰 소비는 수백 단위.
+The skill is registered with `disable-model-invocation: true`, so Claude won't auto-call it — the user must type `/token-detail` explicitly. It's just a script + minimal SKILL.md, so each invocation costs only a few hundred tokens.
 
-> **주의**: slash skill은 Claude Code 구조상 항상 LLM을 거치므로 가끔 모델이 이전 대화 맥락에 끌려 표 대신 엉뚱한 응답을 낼 수 있습니다. **결정론적 동작을 원하면 방식 1(verbose)** 을 쓰세요.
+> **Note**: slash skills always go through the LLM in Claude Code, so the model can occasionally drift off into prose instead of returning the table. **For deterministic output, use Option 1 (verbose).**
 
 ## Cost is "retail" — it will not match the statusline
 
 Claude Code's statusline `[💰 $X.XXX]` shows its **internal session-cumulative** cost tracker, which may reflect team/enterprise plan discounts or different cache-creation accounting. This plugin computes cost from Anthropic's **public pay-per-token rate card** (values hardcoded in `lib/pricing.py`).
 
-Use this plugin's output for **optimization signal** (did caching improve? is this prompt expensive relative to the last one?), not for billing.
+Use this plugin's output as an **optimization signal** (did caching improve? is this prompt expensive relative to the last one?), not for billing.
+
+## Install
+
+This repo is itself a self-contained Claude Code marketplace (`token-keeper`). Register it once with Claude Code and the hook fires regardless of which directory you run Claude Code from.
+
+```bash
+# Option A — register from GitHub (recommended)
+/plugin marketplace add token-keeper/token-tracker
+
+# Option B — point at a local clone (for development / offline use)
+/plugin marketplace add /absolute/path/to/token-tracker
+
+# Activate the plugin
+/plugin install token-tracker@token-keeper
+```
+
+After activation, restart Claude Code. The Stop hook will then print a line like the one above after every response.
+
+Disable: `/plugin disable token-tracker@token-keeper`
+Uninstall: `/plugin uninstall token-tracker@token-keeper`
+
+### Dev mode
+
+To pick up code changes from this repo without reinstalling on every edit, use the [`scripts/dev-mode.sh`](#development) toggle described in the Development section below.
+
+The older approach of registering the hook directly in `.claude/settings.local.json` is no longer used.
 
 ## Files of interest
 
 - `docs/superpowers/specs/` — design specs (Phase 1 overall + Phase 2-B `/token-detail`)
-- `docs/superpowers/plans/` — implementation plans per phase
+- `docs/superpowers/plans/` — per-phase implementation plans
 - `docs/handoff/` — cross-session handoff notes
-- `plugins/token-tracker/lib/pricing_data.json` — 단가 표 (Anthropic 단가 변경 시 이 파일의 row 만 수정 + `fetched` 날짜 갱신)
-- `plugins/token-tracker/lib/pricing.py` — JSON 로드 + cost 계산 로직 (`compute_cost`, prefix-match resolver)
+- `plugins/token-tracker/lib/pricing_data.json` — rate-card table (when Anthropic prices change, edit only the rows here and bump `fetched`)
+- `plugins/token-tracker/lib/pricing.py` — JSON loader + cost computation (`compute_cost`, prefix-match resolver)
 - `plugins/token-tracker/hooks/on_stop.py` — aggregation + output
 - `plugins/token-tracker/lib/i18n/` — translated strings for ko/en
 
-## Install
-
-이 repo 자체가 self-contained Claude Code marketplace (`token-keeper`) 입니다. Claude Code CLI에서 한 번만 등록하면 이후 어느 디렉터리에서 Claude Code를 실행해도 hook이 발화합니다.
-
-```bash
-# Option A — GitHub에서 바로 등록 (추천)
-/plugin marketplace add token-keeper/token-tracker
-
-# Option B — 로컬에 clone 한 경로를 가리키기 (개발/오프라인용)
-/plugin marketplace add /absolute/path/to/token-tracker
-
-# plugin 활성화
-/plugin install token-tracker@token-keeper
-```
-
-활성화 후 Claude Code를 재시작하면 Stop hook이 응답마다 아래 같은 한 줄을 출력합니다:
-
-```
-비용 $0.0180 · 1,546 toks · cache 85% · 12.3s
-```
-
-비활성화: `/plugin disable token-tracker@token-keeper`
-제거: `/plugin uninstall token-tracker@token-keeper`
-
-### 개발 모드
-
-repo 의 코드 변경을 매 reinstall 없이 즉시 반영하려면 [Development 섹션](#development) 의 `scripts/dev-mode.sh` 토글 사용을 권장합니다.
-
-`.claude/settings.local.json` 에 hook 을 직접 등록하던 이전 방식은 더 이상 사용하지 않습니다.
-
 ## Development
 
-### dev mode (작업 폴더 ↔ cache 즉시 반영)
+### Dev mode (working dir ↔ cache instant reflection)
 
-플러그인 코드 수정 시 매번 plugin reinstall 하지 않고 작업 폴더 변경을 즉시 반영하려면 `scripts/dev-mode.sh` 의 dev mode 를 사용합니다.
+When you're editing plugin code and don't want to reinstall on every change, use the dev-mode toggle:
 
 ```bash
-./scripts/dev-mode.sh on      # cache → 작업 폴더 symlink 로 교체
-./scripts/dev-mode.sh off     # 원본 cache 복원
-./scripts/dev-mode.sh status  # 현재 상태 확인
+./scripts/dev-mode.sh on      # cache → symlink to working dir
+./scripts/dev-mode.sh off     # restore the original cache
+./scripts/dev-mode.sh status  # show current state
 ```
 
-`on` 시 cache 디렉터리는 `<version>.backup/` 으로 백업되고, 그 자리에 작업 폴더의 `plugins/token-tracker/` 를 가리키는 symlink 가 생깁니다. `off` 는 그 역순으로 원본을 복원합니다.
+`on` backs the cache directory up to `<version>.backup/` and replaces it with a symlink that points at this repo's `plugins/token-tracker/`. `off` reverses the swap.
 
-#### daemon 코드 수정 시
+#### When you edit daemon code
 
-`lib/server_daemon.py`, `lib/http_server.py`, `lib/history_renderer.py` 같은 daemon 코드를 수정하면 실행 중 daemon 을 재시작해야 반영됩니다:
+Editing `lib/server_daemon.py`, `lib/http_server.py`, `lib/history_renderer.py`, or any other long-running daemon code requires restarting the daemon:
 
 ```
 /token-tracker:token-history-stop
 ```
 
-`style.css` / `app.js` / 템플릿 같은 정적 파일은 daemon 이 매 요청마다 디스크에서 읽으므로 브라우저 새로고침 (cmd+R) 만으로 즉시 반영됩니다.
+Static files like `style.css` / `app.js` / templates are read from disk on every request, so a browser reload (cmd+R) is enough.
 
-#### plugin reinstall 과의 관계
+#### Interaction with `/plugin uninstall` + `/plugin install`
 
-dev mode 가 켜진 상태에서 `/plugin uninstall` + `/plugin install` 을 하면 plugin 시스템이 cache 디렉터리를 새로 만들면서 symlink 가 사라질 수 있습니다. 이 상태는 `./scripts/dev-mode.sh status` 가 감지해서 안내합니다. 어느 쪽이 truth 인지 스크립트가 판단할 수 없으므로 자동 정리하지 않고 수동 처리 명령만 안내합니다.
+If you `uninstall` and `install` while dev mode is on, the plugin system rebuilds the cache directory and the symlink disappears. `./scripts/dev-mode.sh status` detects this state and tells you what happened. The script does not auto-recover because it can't decide which side is the source of truth — it just prints the manual command to run.
 
-#### 수동 검증 체크리스트
+#### Manual smoke-check
 
-dev mode 를 처음 켜는 환경 / Claude Code 업데이트 후 등 기본 동작이 의심될 때:
+When you're spinning up dev mode in a fresh environment or after a Claude Code update:
 
-1. `./scripts/dev-mode.sh status` → "OFF" 확인
-2. `./scripts/dev-mode.sh on` → "ON" + 가리키는 경로 출력 확인
-3. `/reload-plugins` 실행
-4. 새 prompt 한 번 입력 → 응답 마지막에 토큰 줄 (`비용 $... · ... toks ...`) 출력 확인
-5. `/token-tracker:token-history` → daemon 정상 동작 + URL 응답 확인
-6. 작업 폴더의 `plugins/token-tracker/skills/token-history/static/style.css` 한 줄 수정 → 위 페이지 새로고침으로 즉시 반영 확인 (사용자 메모: 빨간색 `#FF0000` 임시 마커가 효과적)
-7. `./scripts/dev-mode.sh off` → "OFF" 복원 + `<version>.backup/` 사라짐 확인
+1. `./scripts/dev-mode.sh status` → expect "OFF"
+2. `./scripts/dev-mode.sh on` → expect "ON" + the symlink target path
+3. Run `/reload-plugins`
+4. Submit a new prompt → expect a token line (`cost $... · ... toks ...`) at the end of the response
+5. Run `/token-tracker:token-history` → expect the daemon to come up and print a URL
+6. Edit a CSS line in `plugins/token-tracker/skills/token-history/static/style.css` → reload the page, expect immediate effect (a `#FF0000` marker is great for verification)
+7. `./scripts/dev-mode.sh off` → expect "OFF" again, `<version>.backup/` gone
 
-3~5 가 실패하면 plugin 시스템이 symlink 를 인식하지 못하는 것입니다. 즉시 `off` 로 복원하고 이슈 리포트.
+If steps 3–5 fail, the plugin system isn't honoring the symlink. Toggle `off` immediately and file an issue.
 
 ## Tests
 
-repo 루트에서:
+From the repo root:
 
 ```bash
 ./venv/bin/pytest plugins/token-tracker/tests -q
