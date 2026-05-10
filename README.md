@@ -84,7 +84,7 @@ Use this plugin's output for **optimization signal** (did caching improve? is th
 
 ```bash
 # Option A — GitHub에서 바로 등록 (추천)
-/plugin marketplace add brody424/TokenTracker
+/plugin marketplace add token-keeper/token-tracker
 
 # Option B — 로컬에 clone 한 경로를 가리키기 (개발/오프라인용)
 /plugin marketplace add /absolute/path/to/token-tracker
