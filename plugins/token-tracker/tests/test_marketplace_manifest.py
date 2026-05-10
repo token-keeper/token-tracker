@@ -15,7 +15,7 @@ def test_marketplace_manifest_exists():
 
 def test_marketplace_manifest_has_required_fields():
     data = json.loads(MANIFEST.read_text())
-    assert data["name"] == "token-tracker-local"
+    assert data["name"] == "token-keeper"
     assert "owner" in data and "name" in data["owner"]
     assert isinstance(data["plugins"], list) and len(data["plugins"]) == 1
 

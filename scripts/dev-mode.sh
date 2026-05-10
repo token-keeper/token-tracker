@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLUGIN_SRC="$REPO_ROOT/plugins/token-tracker"
 PLUGIN_MANIFEST="$PLUGIN_SRC/.claude-plugin/plugin.json"
-CACHE_BASE="$HOME/.claude/plugins/cache/token-tracker-local/token-tracker"
+CACHE_BASE="$HOME/.claude/plugins/cache/token-keeper/token-tracker"
 
 # _resolve_paths 가 set 함
 MANIFEST_VERSION=""    # plugin.json 의 현재 version
@@ -266,7 +266,7 @@ cmd_off() {
         echo "  cache: $TARGET → $(readlink "$TARGET")" >&2
         echo "조치: symlink 를 수동 제거하고 plugin reinstall:" >&2
         echo "  rm '$TARGET'" >&2
-        echo "  /plugin install token-tracker@token-tracker-local" >&2
+        echo "  /plugin install token-tracker@token-keeper" >&2
         exit 1
     fi
 

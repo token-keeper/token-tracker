@@ -78,16 +78,19 @@ Use this plugin's output for **optimization signal** (did caching improve? is th
 - `plugins/token-tracker/hooks/on_stop.py` — aggregation + output
 - `plugins/token-tracker/lib/i18n/` — translated strings for ko/en
 
-## Install (local marketplace)
+## Install
 
-이 repo 자체가 self-contained Claude Code marketplace입니다. Claude Code CLI에서 한 번만 등록하면 이후 어느 디렉터리에서 Claude Code를 실행해도 hook이 발화합니다.
+이 repo 자체가 self-contained Claude Code marketplace (`token-keeper`) 입니다. Claude Code CLI에서 한 번만 등록하면 이후 어느 디렉터리에서 Claude Code를 실행해도 hook이 발화합니다.
 
 ```bash
-# 1. marketplace 등록 (repo를 clone 한 경로를 가리킨다)
+# Option A — GitHub에서 바로 등록 (추천)
+/plugin marketplace add brody424/TokenTracker
+
+# Option B — 로컬에 clone 한 경로를 가리키기 (개발/오프라인용)
 /plugin marketplace add /absolute/path/to/token-tracker
 
-# 2. plugin 활성화
-/plugin install token-tracker@token-tracker-local
+# plugin 활성화
+/plugin install token-tracker@token-keeper
 ```
 
 활성화 후 Claude Code를 재시작하면 Stop hook이 응답마다 아래 같은 한 줄을 출력합니다:
@@ -96,8 +99,8 @@ Use this plugin's output for **optimization signal** (did caching improve? is th
 비용 $0.0180 · 1,546 toks · cache 85% · 12.3s
 ```
 
-비활성화: `/plugin disable token-tracker@token-tracker-local`
-제거: `/plugin uninstall token-tracker@token-tracker-local`
+비활성화: `/plugin disable token-tracker@token-keeper`
+제거: `/plugin uninstall token-tracker@token-keeper`
 
 ### 개발 모드
 
