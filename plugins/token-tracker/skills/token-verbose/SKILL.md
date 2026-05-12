@@ -1,6 +1,6 @@
 ---
 name: token-verbose
-description: token-tracker verbose 모드 토글 — 매 Stop 응답에 turn별 상세 표를 자동으로 덧붙이는 설정을 on/off 전환 또는 조회
+description: "[on|off|status] — token-tracker verbose 모드 토글 (매 Stop 응답에 turn별 상세 표 자동 출력)"
 argument-hint: "[on|off|status]"
 disable-model-invocation: true
 ---
