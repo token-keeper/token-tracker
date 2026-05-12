@@ -15,7 +15,7 @@ import pytest
 
 
 REAL_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_RELATIVE = Path("skills") / "token-verbose" / "scripts" / "verbose_toggle.py"
+SCRIPT_RELATIVE = Path("scripts") / "verbose_toggle.py"
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def tmp_plugin_root(tmp_path: Path) -> Path:
     (root / "lib").symlink_to(REAL_ROOT / "lib")
 
     # Copy the script to its canonical location under the tmp root.
-    script_dir = root / "skills" / "token-verbose" / "scripts"
+    script_dir = root / "scripts"
     script_dir.mkdir(parents=True)
     shutil.copy2(REAL_ROOT / SCRIPT_RELATIVE, script_dir / "verbose_toggle.py")
 

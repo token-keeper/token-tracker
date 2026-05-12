@@ -12,8 +12,8 @@ def _setup_sys_path() -> Path:
     if env:
         root = Path(env)
     else:
-        # scripts/verbose_toggle.py -> scripts -> token-verbose -> skills -> plugin root
-        root = Path(__file__).resolve().parent.parent.parent.parent
+        # scripts/verbose_toggle.py -> scripts -> plugin root
+        root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(root))
     return root
 
