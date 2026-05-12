@@ -110,4 +110,4 @@ From the repo root:
 ./venv/bin/pytest plugins/token-tracker/tests -q
 ```
 
-80 tests across unit + integration + e2e (hook subprocess, skill script subprocess). Python 3.10+ stdlib only, pytest as the only dev dependency.
+436 tests across unit + integration + e2e (hook subprocess, skill script subprocess). Python 3.10+ stdlib only, pytest as the only dev dependency.
