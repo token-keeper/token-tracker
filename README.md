@@ -72,6 +72,14 @@ Claude Code's statusline `[💰 $X.XXX]` shows its **internal session-cumulative
 
 Use this plugin's output as an **optimization signal** (did caching improve? is this prompt expensive relative to the last one?), not for billing.
 
+## Token-saving tips
+
+Patterns I've found useful while watching the numbers this plugin reports:
+
+- **Claude Code keeps the prompt cache alive for ~1 hour by default.** If you step away for more than that, the cache expires and the next prompt is treated as a cold start.
+- **Before a long break, run `/compact` or open a fresh session.** A compacted/empty context means the next "first prompt" rebuilds caches from a small base instead of the full conversation.
+- **If you just resume a session after an hour idle, the entire accumulated context window goes through `cache creation` again** — that's the most expensive token tier and your usage will spike noticeably in a single turn. Watch for an unusually high `cost` / large `cc` count in the next line this plugin prints right after a long pause.
+
 ## Install
 
 This repo is itself a self-contained Claude Code marketplace (`token-keeper`). Register it once with Claude Code and the hook fires regardless of which directory you run Claude Code from.
