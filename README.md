@@ -23,36 +23,9 @@ cost $0.0180 · 1,546 toks · cache 85% · 12.3s
 - **cache**: `cache_read / total_input` hit rate.
 - **s**: wall-clock seconds from `UserPromptSubmit` to `Stop`.
 
-## Detail view — two ways
+## Detail view (verbose mode)
 
-### Option 1 (recommended): verbose mode — auto-printed every response
-
-Set `"verbose": true` in `plugins/token-tracker/config.json` and the Stop hook will print the one-line summary plus a per-turn detail table at the end of every response:
-
-```json
-{
-  "language": "en",
-  "verbose": true
-}
-```
-
-For one-off debugging, the env var is handier:
-
-```bash
-export TOKEN_TRACKER_VERBOSE=1
-```
-
-This path emits via `systemMessage` directly from the hook, so it's **deterministic (no LLM in the loop) and costs zero tokens**.
-
-### Option 2 (on-demand): `/token-detail` slash skill
-
-Inspect the most recent request's per-turn breakdown when you want it:
-
-```
-/token-detail
-```
-
-Example output:
+For a per-turn detail table at the end of every response, turn on verbose mode. The Stop hook then emits the one-line summary **plus** a per-turn breakdown:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -66,9 +39,32 @@ Example output:
  Legend: cc=cache_creation, cr=cache_read
 ```
 
-The skill is registered with `disable-model-invocation: true`, so Claude won't auto-call it — the user must type `/token-detail` explicitly. It's just a script + minimal SKILL.md, so each invocation costs only a few hundred tokens.
+Three ways to toggle verbose mode:
 
-> **Note**: slash skills always go through the LLM in Claude Code, so the model can occasionally drift off into prose instead of returning the table. **For deterministic output, use Option 1 (verbose).**
+### 1. Slash command (recommended)
+
+```
+/token-verbose on        # enable
+/token-verbose off       # disable
+/token-verbose status    # show current state (also works with no argument)
+```
+
+### 2. `config.json`
+
+```json
+{
+  "language": "en",
+  "verbose": true
+}
+```
+
+### 3. Env var (one-off debugging)
+
+```bash
+export TOKEN_TRACKER_VERBOSE=1
+```
+
+All three paths emit via `systemMessage` directly from the hook, so output is **deterministic (no LLM in the loop) and costs zero tokens**.
 
 ## Cost is "retail" — it will not match the statusline
 
@@ -104,7 +100,7 @@ The older approach of registering the hook directly in `.claude/settings.local.j
 
 ## Files of interest
 
-- `docs/superpowers/specs/` — design specs (Phase 1 overall + Phase 2-B `/token-detail`)
+- `docs/superpowers/specs/` — per-phase design specs
 - `docs/superpowers/plans/` — per-phase implementation plans
 - `docs/handoff/` — cross-session handoff notes
 - `plugins/token-tracker/lib/pricing_data.json` — rate-card table (when Anthropic prices change, edit only the rows here and bump `fetched`)

@@ -23,36 +23,9 @@
 - **cache**: `cache_read / total_input` 적중률.
 - **s**: `UserPromptSubmit` 부터 `Stop` 까지의 wall-clock 초.
 
-## Detail view — 두 가지 방식
+## Detail view (verbose 모드)
 
-### 방식 1 (추천): verbose 모드 — 매 응답마다 자동 출력
-
-`plugins/token-tracker/config.json`에서 `"verbose": true`로 바꾸면 Stop hook이 매 응답 끝에 **한 줄 요약 + turn별 상세 표**를 함께 찍습니다.
-
-```json
-{
-  "language": "ko",
-  "verbose": true
-}
-```
-
-일회성 디버깅엔 환경변수 쪽이 편합니다:
-
-```bash
-export TOKEN_TRACKER_VERBOSE=1
-```
-
-이 방식은 Hook이 `systemMessage`로 직접 출력하므로 **LLM을 거치지 않아 결정론적**이고 토큰 비용 0.
-
-### 방식 2 (주문형): `/token-detail` slash skill
-
-직전 request의 turn별 정보를 **원할 때만** 한 번 조회:
-
-```
-/token-detail
-```
-
-출력 예시:
+매 응답 끝에 turn별 상세 표를 함께 보고 싶다면 verbose 모드를 켜세요. Stop hook이 한 줄 요약 **+ turn별 상세 표**를 같이 출력합니다.
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -66,9 +39,32 @@ export TOKEN_TRACKER_VERBOSE=1
  범례: cc=cache_creation, cr=cache_read
 ```
 
-skill은 `disable-model-invocation: true`로 등록돼 있어 Claude가 자동으로 호출하지 않고, 사용자가 `/token-detail`을 직접 입력해야만 실행됩니다. 내부적으로는 script 출력 + minimal SKILL.md 본문이라 호출당 토큰 소비는 수백 단위.
+켜고 끄는 방법 세 가지:
 
-> **주의**: slash skill은 Claude Code 구조상 항상 LLM을 거치므로 가끔 모델이 이전 대화 맥락에 끌려 표 대신 엉뚱한 응답을 낼 수 있습니다. **결정론적 동작을 원하면 방식 1(verbose)** 을 쓰세요.
+### 1. 슬래시 명령 (추천)
+
+```
+/token-verbose on        # 켜기
+/token-verbose off       # 끄기
+/token-verbose status    # 현재 상태 표시 (인자 없이 호출해도 동일)
+```
+
+### 2. `config.json`
+
+```json
+{
+  "language": "ko",
+  "verbose": true
+}
+```
+
+### 3. 환경변수 (일회성 디버깅)
+
+```bash
+export TOKEN_TRACKER_VERBOSE=1
+```
+
+세 가지 모두 Hook이 `systemMessage`로 직접 출력하므로 **LLM을 거치지 않아 결정론적**이고 토큰 비용 0.
 
 ## Cost is "retail" — statusline 값과 일치하지 않습니다
 
@@ -104,7 +100,7 @@ repo 의 코드 변경을 매 reinstall 없이 즉시 반영하려면 [Developme
 
 ## 주요 파일
 
-- `docs/superpowers/specs/` — design specs (Phase 1 전반 + Phase 2-B `/token-detail`)
+- `docs/superpowers/specs/` — phase별 design specs
 - `docs/superpowers/plans/` — phase 별 implementation plan
 - `docs/handoff/` — 세션 간 인계 노트
 - `plugins/token-tracker/lib/pricing_data.json` — 단가 표 (Anthropic 단가 변경 시 이 파일의 row 만 수정 + `fetched` 날짜 갱신)

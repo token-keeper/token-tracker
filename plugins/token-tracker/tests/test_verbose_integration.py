@@ -171,8 +171,3 @@ def test_token_verbose_skill_manifest():
     assert len(fm.get("description", "")) > 10
 
 
-def test_token_detail_skill_manifest():
-    fm = _read_skill_frontmatter(REAL_ROOT / "skills" / "token-detail" / "SKILL.md")
-    assert fm["name"] == "token-detail"
-    assert fm.get("disable-model-invocation") == "true"
-    assert len(fm.get("description", "")) > 10

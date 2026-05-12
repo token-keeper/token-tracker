@@ -158,8 +158,9 @@ def main() -> int:
         elapsed = max(0.0, time.time() - started_at)
         summary = aggregate(turns, elapsed=elapsed, subagents=fg_subs + async_subs)
 
-        # Persist the just-computed Summary so /token-detail can read it.
-        # Only save when we actually produced turns (flush polling finished).
+        # Persist the just-computed Summary for downstream readers (verbose mode,
+        # future inspection tools). Only save when we actually produced turns
+        # (flush polling finished).
         if summary.turns:
             try:
                 from lib.summary_store import save_last_summary
@@ -217,9 +218,9 @@ def main() -> int:
 
         # Async background dispatch UX (옵션 D): 활성 background agent가 1개라도
         # 있으면 매 Stop마다 끼어드는 출력을 silent 처리. last_summary는 이미
-        # 위에서 저장됐으므로 사용자가 /token-detail로 누적치 확인 가능. 모두
-        # 끝난 시점의 Stop에서 1번만 emit. verbose는 "한 줄 요약 vs 상세 표"의
-        # 출력 형식 차이일 뿐 "언제 emit할지"에는 영향 주지 않는다.
+        # 위에서 저장됐으므로 누적치는 보존된다. 모두 끝난 시점의 Stop에서 1번만 emit.
+        # verbose는 "한 줄 요약 vs 상세 표"의 출력 형식 차이일 뿐 "언제 emit할지"에는
+        # 영향 주지 않는다.
         # file-based로 jsonl 전체를 읽어 이전 turn의 dispatch도 본다 (윈도우 회귀 fix).
         if count_active_async_agents_from_file(transcript_path) > 0:
             return 0
