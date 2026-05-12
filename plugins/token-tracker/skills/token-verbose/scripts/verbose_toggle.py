@@ -19,9 +19,13 @@ def _setup_sys_path() -> Path:
 
 
 def _parse_arg(raw: str) -> str:
-    """Return 'on' / 'off' / '' (status query) / 'unknown'."""
+    """Return 'on' / 'off' / '' (status query) / 'unknown'.
+
+    Both an empty string and the literal 'status' keyword map to a status
+    query — they read current state without mutating config.
+    """
     val = raw.strip().lower()
-    if val == "":
+    if val in ("", "status"):
         return ""
     if val in ("on", "1", "true", "yes"):
         return "on"

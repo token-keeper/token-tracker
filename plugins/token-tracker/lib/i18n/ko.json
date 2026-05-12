@@ -22,7 +22,7 @@
   "verbose_status": "token-tracker verbose: {state}",
   "verbose_changed": "token-tracker verbose: {from_state} → {to_state}",
   "verbose_no_change": "token-tracker verbose: {state} (변경 없음)",
-  "verbose_usage": "사용법: /token-verbose [on|off]  (인자 없으면 현재 상태 표시)",
+  "verbose_usage": "사용법: /token-verbose [on|off|status]  (인자 없으면 현재 상태 표시)",
   "verbose_error": "verbose 토글에 실패했습니다. ~/.claude/plugins/token-tracker/log/error.log 참고.",
   "verbose_error_io": "config.json 쓰기에 실패했습니다 ({reason}). 권한/디스크 공간을 확인하세요.",
   "html_title": "token-tracker history",

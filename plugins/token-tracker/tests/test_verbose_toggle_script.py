@@ -72,6 +72,39 @@ def test_status_query_shows_on_when_config_true(tmp_plugin_root: Path):
     assert _read_config(tmp_plugin_root)["verbose"] is True
 
 
+def test_status_keyword_shows_off_when_config_false(tmp_plugin_root: Path):
+    """The literal 'status' keyword behaves the same as an empty argument."""
+    _write_config(tmp_plugin_root, {"language": "ko", "verbose": False})
+    r = _run(tmp_plugin_root, "status")
+    assert r.returncode == 0
+    assert "off" in r.stdout
+    assert _read_config(tmp_plugin_root)["verbose"] is False
+
+
+def test_status_keyword_shows_on_when_config_true(tmp_plugin_root: Path):
+    _write_config(tmp_plugin_root, {"language": "ko", "verbose": True})
+    r = _run(tmp_plugin_root, "status")
+    assert r.returncode == 0
+    assert "on" in r.stdout
+    assert _read_config(tmp_plugin_root)["verbose"] is True
+
+
+def test_status_keyword_case_insensitive(tmp_plugin_root: Path):
+    _write_config(tmp_plugin_root, {"language": "ko", "verbose": False})
+    r = _run(tmp_plugin_root, "STATUS")
+    assert r.returncode == 0
+    assert "off" in r.stdout
+    assert _read_config(tmp_plugin_root)["verbose"] is False
+
+
+def test_usage_message_lists_status_option(tmp_plugin_root: Path):
+    """An unknown arg must print usage text that documents on|off|status."""
+    _write_config(tmp_plugin_root, {"language": "en", "verbose": False})
+    r = _run(tmp_plugin_root, "enable")
+    assert r.returncode == 0
+    assert "on|off|status" in r.stdout
+
+
 def test_on_flips_false_to_true(tmp_plugin_root: Path):
     _write_config(tmp_plugin_root, {"language": "ko", "verbose": False})
     r = _run(tmp_plugin_root, "on")
