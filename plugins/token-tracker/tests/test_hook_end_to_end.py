@@ -99,7 +99,7 @@ def test_missing_state_empty_transcript_stays_silent(tmp_path):
 
 
 def test_last_summary_saved_after_stop(tmp_path):
-    """Stop hook must persist the aggregated Summary so /token-detail can read it."""
+    """Stop hook must persist the aggregated Summary for downstream readers (verbose mode, future tools)."""
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     session_path = tmp_path / "session.jsonl"
@@ -1841,7 +1841,7 @@ def test_user_prompt_updates_offset_for_slash_command_prompt(tmp_path):
         "transcript_path": str(session_path),
         "cwd": str(tmp_path),
         "hook_event_name": "UserPromptSubmit",
-        "prompt": "<command-name>/token-detail</command-name>",
+        "prompt": "<command-name>/token-verbose</command-name>",
     }
     assert _run("on_user_prompt.py", payload, env).returncode == 0
 

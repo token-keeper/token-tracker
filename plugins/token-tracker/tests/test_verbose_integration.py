@@ -28,11 +28,11 @@ def tmp_plugin_root(tmp_path: Path) -> Path:
     (root / "hooks").symlink_to(REAL_ROOT / "hooks")
     (root / "lib").symlink_to(REAL_ROOT / "lib")
 
-    # Copy the skill script to its canonical location (not a symlink, we'll write its config).
-    script_dir = root / "skills" / "token-verbose" / "scripts"
+    # Copy the toggle script to its canonical location (not a symlink, we'll write its config).
+    script_dir = root / "scripts"
     script_dir.mkdir(parents=True)
     shutil.copy2(
-        REAL_ROOT / "skills" / "token-verbose" / "scripts" / "verbose_toggle.py",
+        REAL_ROOT / "scripts" / "verbose_toggle.py",
         script_dir / "verbose_toggle.py",
     )
     # Seed config with verbose=true so env override behavior is observable.
@@ -80,7 +80,7 @@ def _run_stop(tmp_path: Path, plugin_root: Path, env_overrides: dict) -> str:
 
 
 def _run_toggle(plugin_root: Path, arg: str) -> subprocess.CompletedProcess:
-    script = plugin_root / "skills" / "token-verbose" / "scripts" / "verbose_toggle.py"
+    script = plugin_root / "scripts" / "verbose_toggle.py"
     env = {
         "CLAUDE_PLUGIN_ROOT": str(plugin_root),
         "PATH": "",
@@ -162,17 +162,18 @@ def _read_skill_frontmatter(skill_md: Path) -> dict:
     return result
 
 
-def test_token_verbose_skill_manifest():
-    fm = _read_skill_frontmatter(REAL_ROOT / "skills" / "token-verbose" / "SKILL.md")
-    assert fm["name"] == "token-verbose"
+def test_token_verbose_command_manifest():
+    """token-verbose 는 /commands 형식으로 등록되어 argument-hint 가 자동완성 UI 에서 인라인 표시된다."""
+    fm = _read_skill_frontmatter(REAL_ROOT / "commands" / "token-verbose.md")
+    # commands 형식은 파일명이 명령 이름이므로 'name' 필드 불필요 (codex 패턴)
     assert fm.get("disable-model-invocation") == "true", (
         "token-verbose must be disable-model-invocation:true so LLM cannot auto-call it"
     )
     assert len(fm.get("description", "")) > 10
+    # argument-hint 가 자동완성 UI 에 인자 형태로 표시되도록 필수
+    arg_hint = fm.get("argument-hint", "")
+    assert "on" in arg_hint and "off" in arg_hint and "status" in arg_hint, (
+        f"argument-hint must list on/off/status, got: {arg_hint!r}"
+    )
 
 
-def test_token_detail_skill_manifest():
-    fm = _read_skill_frontmatter(REAL_ROOT / "skills" / "token-detail" / "SKILL.md")
-    assert fm["name"] == "token-detail"
-    assert fm.get("disable-model-invocation") == "true"
-    assert len(fm.get("description", "")) > 10

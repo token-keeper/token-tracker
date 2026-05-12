@@ -12,16 +12,20 @@ def _setup_sys_path() -> Path:
     if env:
         root = Path(env)
     else:
-        # scripts/verbose_toggle.py -> scripts -> token-verbose -> skills -> plugin root
-        root = Path(__file__).resolve().parent.parent.parent.parent
+        # scripts/verbose_toggle.py -> scripts -> plugin root
+        root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(root))
     return root
 
 
 def _parse_arg(raw: str) -> str:
-    """Return 'on' / 'off' / '' (status query) / 'unknown'."""
+    """Return 'on' / 'off' / '' (status query) / 'unknown'.
+
+    Both an empty string and the literal 'status' keyword map to a status
+    query — they read current state without mutating config.
+    """
     val = raw.strip().lower()
-    if val == "":
+    if val in ("", "status"):
         return ""
     if val in ("on", "1", "true", "yes"):
         return "on"
