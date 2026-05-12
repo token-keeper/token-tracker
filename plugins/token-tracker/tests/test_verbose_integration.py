@@ -165,7 +165,7 @@ def _read_skill_frontmatter(skill_md: Path) -> dict:
 def test_token_verbose_command_manifest():
     """token-verbose 는 /commands 형식으로 등록되어 argument-hint 가 자동완성 UI 에서 인라인 표시된다."""
     fm = _read_skill_frontmatter(REAL_ROOT / "commands" / "token-verbose.md")
-    assert fm["name"] == "token-verbose"
+    # commands 형식은 파일명이 명령 이름이므로 'name' 필드 불필요 (codex 패턴)
     assert fm.get("disable-model-invocation") == "true", (
         "token-verbose must be disable-model-invocation:true so LLM cannot auto-call it"
     )
