@@ -24,7 +24,7 @@ _PRICING_DATA_PATH = Path(__file__).parent / "pricing_data.json"
 # 결과가 이 경로에 저장됨. 존재 시 default 단가에 덮어씌움 (merge — override 키
 # 우선, default 만의 키도 유지).
 # 권한 / git / cache 일관성 위험 회피 — state 디렉터리는 plugin 데이터 영역으로
-# reinstall 영향 없고 dev-mode 의 작업 폴더 git 도 더럽히지 않음.
+# reinstall 영향이 없다.
 _STATE_DIR = Path.home() / ".claude" / "plugins" / "token-tracker" / "state"
 _STATE_PRICING_PATH = _STATE_DIR / "pricing_data.json"
 

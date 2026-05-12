@@ -92,12 +92,6 @@ After activation, restart Claude Code. The Stop hook will then print a line like
 Disable: `/plugin disable token-tracker@token-keeper`
 Uninstall: `/plugin uninstall token-tracker@token-keeper`
 
-### Dev mode
-
-To pick up code changes from this repo without reinstalling on every edit, use the [`scripts/dev-mode.sh`](#development) toggle described in the Development section below.
-
-The older approach of registering the hook directly in `.claude/settings.local.json` is no longer used.
-
 ## Files of interest
 
 - `docs/superpowers/specs/` — per-phase design specs
@@ -107,48 +101,6 @@ The older approach of registering the hook directly in `.claude/settings.local.j
 - `plugins/token-tracker/lib/pricing.py` — JSON loader + cost computation (`compute_cost`, prefix-match resolver)
 - `plugins/token-tracker/hooks/on_stop.py` — aggregation + output
 - `plugins/token-tracker/lib/i18n/` — translated strings for ko/en
-
-## Development
-
-### Dev mode (working dir ↔ cache instant reflection)
-
-When you're editing plugin code and don't want to reinstall on every change, use the dev-mode toggle:
-
-```bash
-./scripts/dev-mode.sh on      # cache → symlink to working dir
-./scripts/dev-mode.sh off     # restore the original cache
-./scripts/dev-mode.sh status  # show current state
-```
-
-`on` backs the cache directory up to `<version>.backup/` and replaces it with a symlink that points at this repo's `plugins/token-tracker/`. `off` reverses the swap.
-
-#### When you edit daemon code
-
-Editing `lib/server_daemon.py`, `lib/http_server.py`, `lib/history_renderer.py`, or any other long-running daemon code requires restarting the daemon:
-
-```
-/token-tracker:token-history-stop
-```
-
-Static files like `style.css` / `app.js` / templates are read from disk on every request, so a browser reload (cmd+R) is enough.
-
-#### Interaction with `/plugin uninstall` + `/plugin install`
-
-If you `uninstall` and `install` while dev mode is on, the plugin system rebuilds the cache directory and the symlink disappears. `./scripts/dev-mode.sh status` detects this state and tells you what happened. The script does not auto-recover because it can't decide which side is the source of truth — it just prints the manual command to run.
-
-#### Manual smoke-check
-
-When you're spinning up dev mode in a fresh environment or after a Claude Code update:
-
-1. `./scripts/dev-mode.sh status` → expect "OFF"
-2. `./scripts/dev-mode.sh on` → expect "ON" + the symlink target path
-3. Run `/reload-plugins`
-4. Submit a new prompt → expect a token line (`cost $... · ... toks ...`) at the end of the response
-5. Run `/token-tracker:token-history` → expect the daemon to come up and print a URL
-6. Edit a CSS line in `plugins/token-tracker/skills/token-history/static/style.css` → reload the page, expect immediate effect (a `#FF0000` marker is great for verification)
-7. `./scripts/dev-mode.sh off` → expect "OFF" again, `<version>.backup/` gone
-
-If steps 3–5 fail, the plugin system isn't honoring the symlink. Toggle `off` immediately and file an issue.
 
 ## Tests
 
