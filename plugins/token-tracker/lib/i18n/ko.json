@@ -1,10 +1,9 @@
 {
   "header_title": "직전 request 상세",
-  "header_total": "총 비용 {cost} | {tokens} toks | cache {rate} | {elapsed} | {turns} turns",
   "col_index": "#",
   "col_model": "모델",
   "col_tools": "툴",
-  "col_input_meta": "input-meta",
+  "col_input_meta": "input",
   "col_cc": "cc",
   "col_cr": "cr",
   "col_output": "output",

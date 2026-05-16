@@ -211,6 +211,17 @@
         const inner = document.createElement('div');
         inner.className = 'expand-inner';
 
+        if (r.prompt) {
+          const promptSection = document.createElement('div');
+          promptSection.className = 'user-prompt-section';
+          promptSection.innerHTML = `
+            <div class="label">${escape(t('userPrompt'))}</div>
+            <div class="body"></div>
+          `;
+          promptSection.querySelector('.body').textContent = r.prompt;
+          inner.appendChild(promptSection);
+        }
+
         const toolbar = document.createElement('div');
         toolbar.className = 'turns-toolbar';
         toolbar.innerHTML = `
@@ -296,7 +307,7 @@
               <span class="col th-request">${requestPreview}</span>
               <span class="col th-cost ${isHotTurn ? 'is-hot' : ''}">${fmtCost(tn.cost)}</span>
               <span class="col th-input">${fmtToks(tn.input)}</span>
-              <span class="col th-cc ${ccClassT}">${fmtToks(tn.cc)}</span>
+              <span class="col th-cc ${ccClassT}">${formatK(tn.cc)}</span>
               <span class="col th-cr">${formatK(tn.cr)}</span>
               <span class="col th-output">${fmtToks(tn.output)}</span>
               <span class="col th-elapsed">${fmtSec(tn.elapsed)}</span>
