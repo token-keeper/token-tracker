@@ -290,3 +290,27 @@ def test_render_includes_meta_block_with_version():
     body = _extract_inline_payload(html, "meta")
     decoded = json.loads(body)
     assert "ts" in decoded and "ver" in decoded
+
+
+def test_time_label_today_shows_only_hours_minutes():
+    """오늘 날짜는 HH:MM 만 표시."""
+    import time
+    from lib.history_renderer import _flatten_entry
+    now = time.time()
+    f = _flatten_entry(_entry(started_at=now))
+    # 오늘 == HH:MM (5 chars, no dash)
+    assert "-" not in f["timeLabel"], f"expected HH:MM only, got {f['timeLabel']!r}"
+    assert len(f["timeLabel"]) == 5
+
+
+def test_time_label_other_day_includes_date():
+    """오늘이 아닌 날짜는 MM-DD HH:MM 형식으로 날짜 prefix 가 붙는다."""
+    import time
+    from lib.history_renderer import _flatten_entry
+    # 30일 전 → 무조건 다른 날짜
+    past = time.time() - 30 * 86400
+    f = _flatten_entry(_entry(started_at=past))
+    # MM-DD HH:MM 형식이면 길이 11, "-" 포함, 공백 포함
+    assert "-" in f["timeLabel"]
+    assert " " in f["timeLabel"]
+    assert len(f["timeLabel"]) == 11

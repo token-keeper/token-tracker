@@ -87,19 +87,21 @@ def _pad(s: str, width: int, align: str) -> str:
     return pad + s if align == "right" else s + pad
 
 
-def _fmt_compact_number(n: int) -> str:
+def _fmt_compact_number(n: int, *, low_threshold: bool = False) -> str:
     """Compact token-count display, output ≤6 visible chars to fit table cells.
 
-    < 10,000           : comma (e.g. "9,999")
-    10,000~99,994      : "NN.NNK" (2 decimals)
-    99,995~999,949     : "NNN.NK" (1 decimal — keeps to 6 chars)
-    999,950~99,994,999 : promote to M, same adaptive precision
-    99,995,000~        : promote to B
+    Default thresholds (low_threshold=False):
+        < 10,000           : comma (e.g. "9,999")
+        10,000~99,994      : "NN.NNK" (2 decimals)
+        99,995~999,949     : "NNN.NK" (1 decimal — keeps to 6 chars)
+        999,950~99,994,999 : promote to M, same adaptive precision
+        99,995,000~        : promote to B
 
-    Threshold = 10_000 chosen to avoid noisy K-suffix on small numbers
-    while preventing the previous `421...` truncation on cache_creation
-    columns that routinely exceed terminal column width (cc=6).
+    low_threshold=True (used by cc column): K suffix starts at 1,000 so
+    cache_creation values like 1,234 render as "1.23K" instead of "1,234".
     """
+    if low_threshold and 1_000 <= n < 10_000:
+        return f"{n / 1_000:.2f}K"
     if n < 10_000:
         return f"{n:,}"
     if n < 1_000_000:
@@ -120,6 +122,11 @@ def _fmt_compact_number(n: int) -> str:
     if scaled < 99.995:
         return f"{scaled:.2f}B"
     return f"{scaled:.1f}B"
+
+
+def _fmt_cc(n: int) -> str:
+    """cc 컬럼 전용 — 1,000 이상이면 K 표기 (예: 1.23K)."""
+    return _fmt_compact_number(n, low_threshold=True)
 
 
 def _format_tools(tools: list[dict]) -> str:
@@ -178,16 +185,6 @@ def format_detail(summary: Summary, language: str) -> str:
     if not summary.turns:
         return s["err_empty_turns"]
 
-    cost_str = f"${summary.total_cost:.4f}"
-    total_tokens = summary.total_input_tokens + summary.total_output_tokens
-    cache_rate = f"{int(round(summary.cache_hit_rate * 100))}%"
-    elapsed = format_elapsed(summary.total_elapsed)
-    header_line = s["header_total"].format(
-        cost=cost_str, tokens=f"{total_tokens:,}",
-        rate=cache_rate, elapsed=elapsed,
-        turns=len(summary.turns),
-    )
-
     sub_prefix = s["subagent_row_prefix"]
 
     # Compute dynamic model column width: max of header label, all turn
@@ -214,7 +211,7 @@ def format_detail(summary: Summary, language: str) -> str:
     col_header_row = (" " * _GAP).join(header_cells)
 
     row_width = visual_width(col_header_row)
-    rule_width = max(row_width, visual_width(header_line), visual_width(s["header_title"]))
+    rule_width = max(row_width, visual_width(s["header_title"]))
     rule = "━" * rule_width
 
     rows: list[str] = []
@@ -234,7 +231,7 @@ def format_detail(summary: Summary, language: str) -> str:
             _short_model_name(turn.model),
             _format_tools(turn.tools_used),
             _fmt_compact_number(turn.input_tokens),
-            _fmt_compact_number(turn.cache_creation_5m_tokens + turn.cache_creation_1h_tokens),
+            _fmt_cc(turn.cache_creation_5m_tokens + turn.cache_creation_1h_tokens),
             _fmt_compact_number(turn.cache_read_tokens),
             _fmt_compact_number(turn.output_tokens),
             cost,
@@ -260,7 +257,7 @@ def format_detail(summary: Summary, language: str) -> str:
                 _sub_label(sub, sub_prefix),
                 "",  # tools column blank for child rows (T6 future)
                 _fmt_compact_number(sub.input_tokens),
-                _fmt_compact_number(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens),
+                _fmt_cc(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens),
                 _fmt_compact_number(sub.cache_read_tokens),
                 _fmt_compact_number(sub.output_tokens),
                 sub_cost,
@@ -274,7 +271,6 @@ def format_detail(summary: Summary, language: str) -> str:
     parts = [
         rule,
         " " + s["header_title"],
-        " " + header_line,
         "",
         " " + col_header_row,
         *[" " + r for r in rows],

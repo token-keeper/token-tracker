@@ -100,13 +100,14 @@ def test_multi_turn_all_rows_present():
     assert row_starts == ["1", "2", "3"]
 
 
-def test_header_total_contains_summary_values():
+def test_header_does_not_duplicate_total_cost():
+    """v0.x: header_total 라인 제거됨 — 같은 정보가 format_summary로 위에
+    이미 표시되어 verbose 출력 시 중복이었기 때문. header_title은 유지."""
     s = _summary([_turn()])
     s.total_cost = 0.0180
-    s.total_elapsed = 12.3
     out = format_detail(s, "ko")
-    assert "$0.0180" in out
-    assert "12.3" in out
+    assert "직전 request 상세" in out
+    assert "총 비용 $" not in out  # header_total line gone
 
 
 def test_legend_included():
@@ -376,6 +377,33 @@ def test_fmt_compact_number_under_10k_uses_comma():
     assert _fmt_compact_number(9999) == "9,999"
 
 
+def test_fmt_compact_number_low_threshold_uses_K_at_1000():
+    """cc 컬럼용: 1,000 이상이면 K 표기 (예: 1.50K)."""
+    from lib.detail_formatter import _fmt_compact_number
+    assert _fmt_compact_number(999, low_threshold=True) == "999"
+    assert _fmt_compact_number(1_000, low_threshold=True) == "1.00K"
+    assert _fmt_compact_number(1_234, low_threshold=True) == "1.23K"
+    assert _fmt_compact_number(9_999, low_threshold=True) == "10.00K"
+    # 10K 이상은 기존 동작과 동일
+    assert _fmt_compact_number(12_345, low_threshold=True) == "12.35K"
+
+
+def test_format_detail_cc_column_uses_K_when_over_1000():
+    """cc 값이 1,000 ~ 9,999 범위에 있을 때 K 표기로 출력되는지 회귀 가드."""
+    turn = _turn(cache_creation_5m_tokens=1_234)
+    out = format_detail(_summary([turn]), "ko")
+    assert "1.23K" in out
+    assert "1,234" not in out
+
+
+def test_format_detail_input_column_label_renamed_from_input_meta():
+    """v0.x: input-meta → input 라벨 변경."""
+    out_ko = format_detail(_summary([_turn()]), "ko")
+    assert "input-meta" not in out_ko
+    out_en = format_detail(_summary([_turn()]), "en")
+    assert "input-meta" not in out_en
+
+
 def test_fmt_compact_number_thousands_uses_K():
     from lib.detail_formatter import _fmt_compact_number
     assert _fmt_compact_number(10_000) == "10.00K"   # 6 chars
@@ -421,10 +449,14 @@ def test_format_detail_uses_minute_format_for_long_elapsed():
     assert "125.0s" not in out
 
 
-def test_format_detail_header_includes_turn_count():
+def test_format_detail_renders_all_turn_rows():
+    """header_total 라인이 없어진 뒤에도 turn row가 모두 렌더되는지 확인."""
     turns = [_turn(index=0, message_id="a"), _turn(index=1, message_id="b"),
              _turn(index=2, message_id="c"), _turn(index=3, message_id="d")]
     out = format_detail(_summary(turns), "ko")
-    assert "4 turns" in out
-    out_en = format_detail(_summary(turns), "en")
-    assert "4 turns" in out_en
+    lines = out.splitlines()
+    row_starts = [
+        l.strip().split()[0] for l in lines
+        if l.strip() and l.strip()[0].isdigit()
+    ]
+    assert row_starts == ["1", "2", "3", "4"]

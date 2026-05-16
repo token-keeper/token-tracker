@@ -393,6 +393,29 @@ tr.expand-row > td {
   padding: 14px 16px 18px;
   border-top: 1px dashed var(--border-strong);
 }
+.user-prompt-section { margin-bottom: 14px; }
+.user-prompt-section .label {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  margin-bottom: 6px;
+}
+.user-prompt-section .body {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+  padding: 9px 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
 .turns-toolbar {
   display: flex;
   align-items: center;

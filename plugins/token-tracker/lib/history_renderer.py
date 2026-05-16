@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -187,11 +187,14 @@ def _build_turn_cards(
     return cards
 
 
-def _flatten_entry(entry: dict) -> dict:
+def _flatten_entry(entry: dict, *, today: date | None = None) -> dict:
     """Map a history_store nested entry to the flat shape the design expects.
 
     Output keys: n, time, timeLabel, prompt, model, session, cost, in, out,
     cache, elapsed, turns.
+
+    `today` lets the caller pre-compute the local date once per render so a
+    batch of entries can't straddle a midnight boundary mid-loop.
     """
     started_at = float(entry.get("started_at") or 0.0)
     ended_at = float(entry.get("ended_at") or 0.0)
@@ -201,12 +204,16 @@ def _flatten_entry(entry: dict) -> dict:
     session_id = str(entry.get("session_id") or "")
     transcript_entries = entry.get("transcript_entries") or []
 
+    if today is None:
+        today = datetime.now().astimezone().date()
     try:
-        time_label = (
-            datetime.fromtimestamp(started_at, tz=timezone.utc)
-            .astimezone()
-            .strftime("%H:%M")
+        local_dt = (
+            datetime.fromtimestamp(started_at, tz=timezone.utc).astimezone()
         )
+        if local_dt.date() == today:
+            time_label = local_dt.strftime("%H:%M")
+        else:
+            time_label = local_dt.strftime("%m-%d %H:%M")
     except (ValueError, OSError, OverflowError):
         time_label = ""
 
@@ -236,8 +243,9 @@ def render_history_html(
     generated_at = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
     version = _read_plugin_version()
 
-    flat_current = [_flatten_entry(e) for e in current]
-    flat_all = [_flatten_entry(e) for e in all_sessions]
+    today = datetime.now().astimezone().date()
+    flat_current = [_flatten_entry(e, today=today) for e in current]
+    flat_all = [_flatten_entry(e, today=today) for e in all_sessions]
 
     replacements = {
         "__LANG__": lang if lang in ("ko", "en") else "en",
