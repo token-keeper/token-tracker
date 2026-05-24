@@ -105,17 +105,17 @@ Uninstall: `/plugin uninstall token-tracker@token-keeper`
 - `docs/superpowers/specs/` — per-phase design specs
 - `docs/superpowers/plans/` — per-phase implementation plans
 - `docs/handoff/` — cross-session handoff notes
-- `plugins/token-tracker/lib/pricing_data.json` — rate-card table (when Anthropic prices change, edit only the rows here and bump `fetched`)
-- `plugins/token-tracker/lib/pricing.py` — JSON loader + cost computation (`compute_cost`, prefix-match resolver)
-- `plugins/token-tracker/hooks/on_stop.py` — aggregation + output
-- `plugins/token-tracker/lib/i18n/` — translated strings for ko/en
+- `lib/pricing_data.json` — rate-card table (when Anthropic prices change, edit only the rows here and bump `fetched`)
+- `lib/pricing.py` — JSON loader + cost computation (`compute_cost`, prefix-match resolver)
+- `hooks/on_stop.py` — aggregation + output
+- `lib/i18n/` — translated strings for ko/en
 
 ## Tests
 
 From the repo root:
 
 ```bash
-./venv/bin/pytest plugins/token-tracker/tests -q
+./venv/bin/pytest tests -q
 ```
 
 436 tests across unit + integration + e2e (hook subprocess, skill script subprocess). Python 3.10+ stdlib only, pytest as the only dev dependency.
