@@ -11,7 +11,7 @@ import pytest
 def _import_history_main():
     """Import skills/token-history/scripts/history.py by file path
     (디렉터리명에 `-` 포함되어 일반 import 불가)."""
-    plugin_root = Path(__file__).resolve().parents[1]  # plugins/token-tracker/
+    plugin_root = Path(__file__).resolve().parents[1]  # repo root
     spec = importlib.util.spec_from_file_location(
         "history_skill_main",
         plugin_root / "skills" / "token-history" / "scripts" / "history.py",
