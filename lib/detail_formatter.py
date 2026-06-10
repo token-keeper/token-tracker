@@ -14,10 +14,12 @@ from lib.pricing import compute_cost, effective_billing_model, is_known_model
 # than i18n key — the literal "sub:" reads identically in ko/en (KISS).
 _SUB_LABEL = "sub:"
 
-# Pattern for `claude-{family}-{major}-{minor}` with optional date/variant
+# Pattern for `claude-{family}-{major}[-{minor}]` with optional date/variant
 # suffix. Used by `_short_model_name` to render compact labels like
-# "opus 4.7" / "sonnet 4.6" / "haiku 4.5" in the model column.
-_MODEL_NAME_RE = re.compile(r"^claude-([a-z]+)-(\d+)-(\d+)(?:[-\[].*)?$")
+# "opus 4.7" / "fable 5" / "haiku 4.5" in the model column.
+# minor 는 optional (claude-fable-5 처럼 단일 버전 모델). 버전 숫자는 1~2자리로
+# 제한해 8자리 date suffix (-20250514) 가 minor 로 오인되지 않게 한다.
+_MODEL_NAME_RE = re.compile(r"^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?(?:[-\[].*)?$")
 
 
 def _short_model_name(model: str) -> str:
@@ -26,6 +28,8 @@ def _short_model_name(model: str) -> str:
     Examples:
         claude-opus-4-7              -> opus 4.7
         claude-opus-4-7[1m]          -> opus 4.7
+        claude-fable-5               -> fable 5
+        claude-fable-5[1m]           -> fable 5
         claude-sonnet-4-6-20250101   -> sonnet 4.6
         claude-haiku-4-5-20251001    -> haiku 4.5
         unknown                      -> unknown (passthrough)
@@ -36,7 +40,7 @@ def _short_model_name(model: str) -> str:
     if not m:
         return model
     family, major, minor = m.group(1), m.group(2), m.group(3)
-    return f"{family} {major}.{minor}"
+    return f"{family} {major}.{minor}" if minor else f"{family} {major}"
 
 
 @dataclass

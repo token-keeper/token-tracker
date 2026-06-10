@@ -287,6 +287,11 @@ def test_short_model_name_normalizes_known_ids():
     assert _short_model_name("claude-sonnet-4-6") == "sonnet 4.6"
     assert _short_model_name("claude-sonnet-4-6-20250101") == "sonnet 4.6"
     assert _short_model_name("claude-haiku-4-5-20251001") == "haiku 4.5"
+    # 단일 버전 모델 (minor 없음) — claude-fable-5
+    assert _short_model_name("claude-fable-5") == "fable 5"
+    assert _short_model_name("claude-fable-5[1m]") == "fable 5"
+    # date suffix 가 minor 로 오인되면 안 됨 — claude-opus-4-20250514
+    assert _short_model_name("claude-opus-4-20250514") == "opus 4"
     # unknown → original
     assert _short_model_name("some-other-model") == "some-other-model"
     # empty → empty

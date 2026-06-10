@@ -23,7 +23,7 @@ _JS_PATH = (
 )
 
 
-_MODEL_NAME_RE = re.compile(r"^claude-([a-z]+)-(\d+)-(\d+)(?:[-\[].*)?$")
+_MODEL_NAME_RE = re.compile(r"^claude-([a-z]+)-(\d{1,2})(?:-(\d{1,2}))?(?:[-\[].*)?$")
 _TURN_TEXT_CAP_BYTES = 50 * 1024
 
 
@@ -65,14 +65,15 @@ def _read_plugin_version() -> str:
 
 
 def _short_model_name(model: str) -> str:
-    """`claude-opus-4-7[1m]` → `opus 4.7`. Mirrors detail_formatter logic."""
+    """`claude-opus-4-7[1m]` → `opus 4.7`, `claude-fable-5` → `fable 5`.
+    Mirrors detail_formatter logic."""
     if not model:
         return ""
     m = _MODEL_NAME_RE.match(model)
     if not m:
         return model
     family, major, minor = m.group(1), m.group(2), m.group(3)
-    return f"{family} {major}.{minor}"
+    return f"{family} {major}.{minor}" if minor else f"{family} {major}"
 
 
 def _build_turn_cards(
