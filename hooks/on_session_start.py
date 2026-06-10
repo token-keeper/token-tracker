@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""SessionStart hook — pricing 자동 갱신 (7일 주기).
+"""SessionStart hook — pricing 자동 갱신 (1일 주기).
 
 흐름:
 1. state/pricing_meta.json 의 last_fetch 검사
-2. 7일 이내면 silent return (early)
-3. 7일 이상이면:
+2. 1일 이내면 silent return (early)
+3. 1일 이상이면:
    - pricing_fetch.fetch_pricing_models() 호출 (3초 timeout, fail-soft)
    - 성공: state/pricing_data.json 에 write + meta 갱신
    - 실패: meta 안 갱신 (다음 SessionStart 에 재시도) — silent
@@ -12,7 +12,7 @@
 설계 원칙:
 - **흐름 보호**: 어떤 예외도 hook return code 0 으로 끝남. SessionStart 가
   실패하면 사용자 세션 시작이 깨질 수 있어 절대 propagate 안 함.
-- **idempotent**: 7일 이내면 no-op, 7일 이상이면 1회 fetch.
+- **idempotent**: 1일 이내면 no-op, 1일 이상이면 1회 fetch.
 - **silent**: 자동 갱신 결과는 다음 응답의 token line / detail formatter 가
   새 단가 적용해 자연스레 노출. 별도 stderr 안내는 새 모델 발견 시에만.
 """
@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-_FETCH_INTERVAL_DAYS = 7
+_FETCH_INTERVAL_DAYS = 1
 
 
 def _setup_sys_path() -> Path:
@@ -115,7 +115,7 @@ def _try_auto_update() -> None:
     meta_path = state_d / "pricing_meta.json"
 
     if not _is_stale(meta_path, _FETCH_INTERVAL_DAYS):
-        return  # 7일 이내 — skip
+        return  # 1일 이내 — skip
 
     fetched = fetch_pricing_models()
     if fetched is None:

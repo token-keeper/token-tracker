@@ -125,10 +125,10 @@ def isolated_state(monkeypatch, tmp_path):
 
 
 def test_try_auto_update_skips_when_not_stale(monkeypatch, isolated_state):
-    """meta 가 1일 전이면 fetch 호출 안 함 (early return)."""
+    """meta 가 interval (1일) 이내 — 1시간 전이면 fetch 호출 안 함 (early return)."""
     meta = isolated_state / "pricing_meta.json"
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    meta.write_text(json.dumps({"last_fetch": yesterday}), encoding="utf-8")
+    an_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    meta.write_text(json.dumps({"last_fetch": an_hour_ago}), encoding="utf-8")
 
     fetch_called = []
 

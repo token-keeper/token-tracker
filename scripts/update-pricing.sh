@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 즉시 pricing fetch + state override write — 7일 stale 체크 무시.
+# 즉시 pricing fetch + state override write — 1일 stale 체크 무시.
 # 사용자가 새 모델 출시 인지 시 실행하거나, SessionStart 자동 갱신을 강제.
 #
 # 동작:

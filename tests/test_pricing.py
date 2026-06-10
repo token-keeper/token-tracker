@@ -1,9 +1,15 @@
+import json
 import math
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from lib import pricing
+from lib import pricing, pricing_fetch
 from lib.parser import SubagentUsage, TurnUsage
+
+# conftest 의 autouse fixture 가 setattr 로 막기 전의 실제 함수 참조 —
+# refresh 동작 검증 테스트에서 복원용.
+_REAL_REFRESH = pricing._try_refresh_for_unknown
 
 
 def test_known_model_cost_opus():
@@ -76,6 +82,17 @@ def test_prefix_match_opus_with_context_suffix():
     )
     # Opus 4.7 신단가 input = $5/MTok
     assert math.isclose(pricing.compute_cost("claude-opus-4-7[1m]", u), 5.0, rel_tol=1e-6)
+
+
+def test_prefix_match_fable_with_context_suffix():
+    """Fable 5 1M context id ('claude-fable-5[1m]') 도 prefix match 로 과금."""
+    u = TurnUsage(
+        model="claude-fable-5[1m]",
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cache_read_tokens=0,
+    )
+    assert math.isclose(pricing.compute_cost("claude-fable-5[1m]", u), 10.0, rel_tol=1e-6)
 
 
 def test_prefix_match_sonnet_with_date_suffix():
@@ -175,13 +192,149 @@ def test_compute_cost_accepts_subagent_usage():
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# unknown 모델 즉시 fetch — _try_refresh_for_unknown
+# ──────────────────────────────────────────────────────────────────────────
+
+_GHOST_RATES = {
+    "input": 7.0, "output": 21.0,
+    "cache_creation_5m": 8.75, "cache_creation_1h": 14.0,
+    "cache_read": 0.70,
+}
+
+
+@pytest.fixture
+def refresh_env(monkeypatch, tmp_path):
+    """unknown 모델 즉시 fetch 검증용 환경.
+
+    conftest 가 차단한 실제 refresh 함수를 복원하고, state 경로를 tmp 로 격리,
+    PRICING 전역은 snapshot/restore 로 오염 방지.
+    """
+    monkeypatch.setattr(pricing, "_try_refresh_for_unknown", _REAL_REFRESH)
+    monkeypatch.setattr(pricing, "_STATE_DIR", tmp_path)
+    monkeypatch.setattr(pricing, "_STATE_PRICING_PATH", tmp_path / "pricing_data.json")
+    monkeypatch.setattr(pricing, "_STATE_META_PATH", tmp_path / "pricing_meta.json")
+    monkeypatch.setattr(pricing, "_fetch_attempts", {})
+    monkeypatch.setattr(pricing, "_warned_unknown_models", set())
+    snapshot = dict(pricing.PRICING)
+    yield tmp_path
+    pricing.PRICING.clear()
+    pricing.PRICING.update(snapshot)
+
+
+def test_unknown_model_triggers_immediate_fetch(refresh_env, monkeypatch):
+    """$0 (미등록 모델) 감지 → 즉시 fetch → state write → 같은 호출에서 정확 단가."""
+    monkeypatch.setattr(
+        pricing_fetch, "fetch_pricing_models",
+        lambda timeout=3: {"claude-ghost-9": dict(_GHOST_RATES)},
+    )
+    u = TurnUsage(model="claude-ghost-9", input_tokens=1_000_000, output_tokens=0)
+    cost = pricing.compute_cost("claude-ghost-9", u)
+    assert math.isclose(cost, 7.0, rel_tol=1e-6)
+    # state override + meta 가 기록됨
+    state = json.loads((refresh_env / "pricing_data.json").read_text(encoding="utf-8"))
+    assert "claude-ghost-9" in state["models"]
+    meta = json.loads((refresh_env / "pricing_meta.json").read_text(encoding="utf-8"))
+    assert meta["last_fetch_status"] == "success"
+    assert "last_fetch_attempt" in meta
+
+
+def test_unknown_model_fetch_fail_returns_zero_and_records_attempt(refresh_env, monkeypatch):
+    """fetch 실패 → 기존처럼 $0 + 경고. 단 시도는 meta 에 기록 (cooldown 시작)."""
+    monkeypatch.setattr(pricing_fetch, "fetch_pricing_models", lambda timeout=3: None)
+    u = TurnUsage(model="claude-ghost-9", input_tokens=1_000_000, output_tokens=0)
+    assert pricing.compute_cost("claude-ghost-9", u) == 0.0
+    meta = json.loads((refresh_env / "pricing_meta.json").read_text(encoding="utf-8"))
+    assert "last_fetch_attempt" in meta
+    assert "last_fetch" not in meta  # 실패는 last_fetch 안 건드림 (stale 체크 보존)
+
+
+def test_unknown_model_fetch_respects_cooldown(refresh_env, monkeypatch):
+    """최근 시도 (1시간 이내) 가 meta 에 있으면 네트워크를 아예 안 탄다."""
+    recent = datetime.now(timezone.utc) - timedelta(minutes=10)
+    (refresh_env / "pricing_meta.json").write_text(
+        json.dumps({"last_fetch_attempt": recent.isoformat()}), encoding="utf-8"
+    )
+    calls: list[int] = []
+    monkeypatch.setattr(
+        pricing_fetch, "fetch_pricing_models",
+        lambda timeout=3: calls.append(1) or None,
+    )
+    u = TurnUsage(model="claude-ghost-9", input_tokens=1_000_000, output_tokens=0)
+    assert pricing.compute_cost("claude-ghost-9", u) == 0.0
+    assert calls == []
+
+
+def test_unknown_model_fetch_after_cooldown_expired(refresh_env, monkeypatch):
+    """cooldown (1시간) 지난 시도 기록은 fetch 를 막지 않는다."""
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    (refresh_env / "pricing_meta.json").write_text(
+        json.dumps({"last_fetch_attempt": old.isoformat()}), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        pricing_fetch, "fetch_pricing_models",
+        lambda timeout=3: {"claude-ghost-9": dict(_GHOST_RATES)},
+    )
+    u = TurnUsage(model="claude-ghost-9", input_tokens=1_000_000, output_tokens=0)
+    assert math.isclose(pricing.compute_cost("claude-ghost-9", u), 7.0, rel_tol=1e-6)
+
+
+def test_unknown_model_fetch_once_per_process_within_cooldown(refresh_env, monkeypatch):
+    """같은 모델 연속 compute_cost 는 fetch 재시도 안 함 (프로세스 내 cooldown)."""
+    calls: list[int] = []
+    monkeypatch.setattr(
+        pricing_fetch, "fetch_pricing_models",
+        lambda timeout=3: calls.append(1) or None,
+    )
+    u = TurnUsage(model="claude-ghost-9", input_tokens=1_000_000, output_tokens=0)
+    pricing.compute_cost("claude-ghost-9", u)
+    pricing.compute_cost("claude-ghost-9", u)
+    assert len(calls) == 1
+
+
+def test_unknown_model_fetch_retries_in_process_after_cooldown(refresh_env, monkeypatch):
+    """장수 프로세스 (server_daemon) 회귀 가드 — 실패한 모델도 cooldown 경과 후
+    같은 프로세스에서 재시도된다 (영구 set 이었으면 재시작 전까지 $0 고착)."""
+    calls: list[int] = []
+    monkeypatch.setattr(
+        pricing_fetch, "fetch_pricing_models",
+        lambda timeout=3: calls.append(1) or {"claude-ghost-9": dict(_GHOST_RATES)},
+    )
+    u = TurnUsage(model="claude-ghost-9", input_tokens=1_000_000, output_tokens=0)
+    # 1차 시도가 cooldown 한참 전이었던 상황 시뮬레이션 (메모리 + meta 둘 다 과거)
+    old = datetime.now(timezone.utc) - timedelta(hours=2)
+    pricing._fetch_attempts["claude-ghost-9"] = old
+    (refresh_env / "pricing_meta.json").write_text(
+        json.dumps({"last_fetch_attempt": old.isoformat()}), encoding="utf-8"
+    )
+    assert math.isclose(pricing.compute_cost("claude-ghost-9", u), 7.0, rel_tol=1e-6)
+    assert calls == [1]
+
+
+def test_unknown_model_fetch_does_not_lose_default_models(refresh_env, monkeypatch):
+    """reload 후에도 default (repo baseline) 모델들이 PRICING 에 유지 (merge 회귀 가드)."""
+    monkeypatch.setattr(
+        pricing_fetch, "fetch_pricing_models",
+        lambda timeout=3: {"claude-ghost-9": dict(_GHOST_RATES)},
+    )
+    u = TurnUsage(model="claude-ghost-9", input_tokens=1_000_000, output_tokens=0)
+    pricing.compute_cost("claude-ghost-9", u)
+    assert "claude-fable-5" in pricing.PRICING
+    assert "claude-opus-4-7" in pricing.PRICING
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # 모델별 단가 절대값 가드 — pricing_data.json 회귀 방지.
 # tier 단가표를 한 곳(_RATE_TIERS)에서 정의하고 (model_id, tier) 매핑만
 # parametrize 로 늘려쓴다. 단가 변경 시 _RATE_TIERS 한 곳만 갱신.
 # ──────────────────────────────────────────────────────────────────────────
 
 _RATE_TIERS: dict[str, dict[str, float]] = {
-    # Opus 4.5 부터 적용된 신단가 (4.5 / 4.6 / 4.7 공통)
+    "fable": {
+        "input": 10.0, "output": 50.0,
+        "cache_creation_5m": 12.5, "cache_creation_1h": 20.0,
+        "cache_read": 1.0,
+    },
+    # Opus 4.5 부터 적용된 신단가 (4.5 / 4.6 / 4.7 / 4.8 공통)
     "opus_new": {
         "input": 5.0, "output": 25.0,
         "cache_creation_5m": 6.25, "cache_creation_1h": 10.0,
@@ -212,6 +365,8 @@ _RATE_TIERS: dict[str, dict[str, float]] = {
 }
 
 _MODEL_TIER_MAP: list[tuple[str, str]] = [
+    ("claude-fable-5",     "fable"),
+    ("claude-opus-4-8",    "opus_new"),
     ("claude-opus-4-7",    "opus_new"),
     ("claude-opus-4-6",    "opus_new"),
     ("claude-opus-4-5",    "opus_new"),

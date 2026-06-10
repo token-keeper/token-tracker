@@ -17,21 +17,53 @@ from lib import pricing_fetch
 # ──────────────────────────────────────────────────────────────────────────
 
 
-_SAMPLE_HTML_MIN = """
+def _html_row(name: str, prices: tuple[str, str, str, str, str]) -> str:
+    """현재 docs 페이지의 HTML <td> 형식 한 row 생성 (input, 5m, 1h, read, output)."""
+    cells = "".join(
+        f'<td class="p-2 first:pl-0 last:pr-0 text-text-200">${p} / MTok</td>'
+        for p in prices
+    )
+    return (
+        f'<tr class="border-b-0.5"><td class="p-2 first:pl-0 last:pr-0 '
+        f'text-text-200">{name}</td>{cells}</tr>'
+    )
+
+
+_SAMPLE_HTML_MIN = (
+    _html_row("Claude Fable 5", ("10", "12.50", "20", "1", "50"))
+    + _html_row("Claude Opus 4.7", ("5", "6.25", "10", "0.50", "25"))
+    + _html_row("Claude Sonnet 4.6", ("3", "3.75", "6", "0.30", "15"))
+    + _html_row("Claude Haiku 4.5", ("1", "1.25", "2", "0.10", "5"))
+)
+
+# 과거 markdown pipe table 형식 — fallback 경로 가드용.
+_SAMPLE_MARKDOWN_MIN = """
 | Claude Opus 4.7     | $5 / MTok         | $6.25 / MTok    | $10 / MTok      | $0.50 / MTok | $25 / MTok    |
 | Claude Sonnet 4.6   | $3 / MTok         | $3.75 / MTok    | $6 / MTok       | $0.30 / MTok | $15 / MTok    |
 | Claude Haiku 4.5  | $1 / MTok         | $1.25 / MTok    | $2 / MTok       | $0.10 / MTok | $5 / MTok     |
 """
 
 
-def test_parse_pricing_html_extracts_3_models():
-    """정상 table 3 row → 3 model 추출."""
+def test_parse_pricing_html_extracts_4_models():
+    """정상 HTML table 4 row → 4 model 추출."""
     models = pricing_fetch.parse_pricing_html(_SAMPLE_HTML_MIN)
     assert models is not None
-    assert len(models) == 3
+    assert len(models) == 4
+    assert "claude-fable-5" in models
     assert "claude-opus-4-7" in models
     assert "claude-sonnet-4-6" in models
     assert "claude-haiku-4-5" in models
+
+
+def test_parse_pricing_html_new_family_detected():
+    """Opus/Sonnet/Haiku 외 새 패밀리 (Fable) 도 allowlist 없이 자동 감지 + 단가 정확."""
+    models = pricing_fetch.parse_pricing_html(_SAMPLE_HTML_MIN)
+    p = models["claude-fable-5"]
+    assert p["input"] == 10.0
+    assert p["output"] == 50.0
+    assert p["cache_creation_5m"] == 12.50
+    assert p["cache_creation_1h"] == 20.0
+    assert p["cache_read"] == 1.0
 
 
 def test_parse_pricing_html_opus_4_7_rates_correct():
@@ -43,6 +75,27 @@ def test_parse_pricing_html_opus_4_7_rates_correct():
     assert p["cache_creation_5m"] == 6.25
     assert p["cache_creation_1h"] == 10.0
     assert p["cache_read"] == 0.50
+
+
+def test_parse_pricing_html_skips_two_column_batch_table():
+    """batch 테이블 (단가 2컬럼) row 는 5컬럼 패턴에 안 걸려야 함."""
+    html = _html_row("Claude Fable 5", ("10", "12.50", "20", "1", "50")) + (
+        '<tr><td class="p-2">Claude Mythos 5</td>'
+        '<td class="p-2">$5 / MTok</td><td class="p-2">$25 / MTok</td></tr>'
+    )
+    models = pricing_fetch.parse_pricing_html(html)
+    assert models is not None
+    assert "claude-fable-5" in models
+    assert "claude-mythos-5" not in models
+
+
+def test_parse_pricing_html_markdown_fallback():
+    """HTML 매치 0건이면 과거 markdown pipe 형식으로 fallback."""
+    models = pricing_fetch.parse_pricing_html(_SAMPLE_MARKDOWN_MIN)
+    assert models is not None
+    assert len(models) == 3
+    assert models["claude-opus-4-7"]["input"] == 5.0
+    assert models["claude-sonnet-4-6"]["output"] == 15.0
 
 
 def test_parse_pricing_html_handles_haiku_3_5():

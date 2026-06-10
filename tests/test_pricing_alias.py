@@ -30,7 +30,7 @@ def test_resolve_alias_haiku_picks_latest():
 
 def test_resolve_alias_opus_picks_latest():
     target = pricing._resolve_alias("opus")
-    assert target == "claude-opus-4-7"
+    assert target == "claude-opus-4-8"
 
 
 def test_resolve_alias_unknown_family_returns_none():
