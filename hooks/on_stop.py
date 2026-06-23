@@ -58,6 +58,31 @@ def _read_tail(transcript_path: str, offset: int) -> list[dict]:
     return entries
 
 
+def _is_cn_wake_stop(entries: list[dict]) -> bool:
+    """이 Stop 이 cache-necromancer auto-wake turn 에서 fire 됐는지 판정.
+
+    cache-necromancer 의 wake 는 Stop hook 의 stderr ping 으로 Claude 를
+    재기동하며(UserPromptSubmit 미경유), Claude Code 는 이 wake 를 transcript 에
+    `type:user, isMeta:true`, content 에 `[cn:keepalive ...]` 를 포함한
+    "Stop hook feedback" 엔트리로 기록한다. offset 윈도우의 가장 최근 user
+    엔트리가 이 wake ping 이면, 이 Stop 은 실제 사용자 입력이 아니라 wake turn
+    에서 fire 된 것 → emit 억제(직전 turn 토큰 재표시 방지).
+
+    - isMeta 게이트 필수: 진짜 프롬프트에 우연히 같은 문자열이 들어가도 억제 X.
+    - 마커는 `[cn:keepalive` 접두사로 한정 (`[cn:warn]` 등 다른 cn stderr 제외).
+    """
+    for e in reversed(entries):
+        if e.get("type") != "user":
+            continue
+        if not e.get("isMeta"):
+            return False  # 최근 user 엔트리가 진짜 프롬프트 → 정상 표시
+        msg = e.get("message") or {}
+        content = msg.get("content")
+        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        return "[cn:keepalive" in text
+    return False
+
+
 def main() -> int:
     plugin_root = _setup_sys_path()
     try:
@@ -130,6 +155,13 @@ def main() -> int:
             retries += 1
 
         if not has_state and not turns:
+            return 0
+
+        # cache-necromancer auto-wake 로 발생한 Stop 은 사용자가 만든 turn 이
+        # 아니라 시스템 잡음이다. early return 으로 aggregate/history/emit 모두
+        # 건너뛰어 직전 실제 turn 의 토큰이 재표시되는 것을 막는다 (last_summary·
+        # history 오염도 방지 — 의도된 동작).
+        if _is_cn_wake_stop(entries):
             return 0
 
         # Async subagents: extracted from sidechain jsonl files when available.
