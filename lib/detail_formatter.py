@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from lib.aggregator import Summary
 from lib.formatter import format_elapsed
@@ -46,24 +47,133 @@ def _short_model_name(model: str) -> str:
 @dataclass
 class Column:
     key: str         # i18n key for header label
-    width: int       # visible character cells
     align: str       # "left" or "right"
 
 
 _COLUMNS = [
-    Column("col_index", 3, "right"),
-    Column("col_model", 15, "left"),
-    Column("col_tools", 25, "left"),
-    Column("col_input_meta", 10, "right"),
-    Column("col_cc", 6, "right"),
-    Column("col_cr", 7, "right"),
-    Column("col_output", 8, "right"),
-    Column("col_cost", 10, "right"),
-    Column("col_time", 7, "right"),
+    Column("col_index", "right"),
+    Column("col_model", "left"),
+    Column("col_tools", "left"),
+    Column("col_input_meta", "right"),
+    Column("col_cc", "right"),
+    Column("col_cr", "right"),
+    Column("col_output", "right"),
+    Column("col_cost", "right"),
+    Column("col_time", "right"),
 ]
 _MODEL_COL_INDEX = 1
+_TOOLS_COL_INDEX = 2
 _MODEL_COL_MAX_WIDTH = 35  # cap to keep table from growing absurdly wide
+_TOOLS_COL_MAX_WIDTH = 28  # cap tools list so one busy turn can't blow up width
+# Per-column hard caps. Numeric columns stay uncapped — their compact values
+# (`_fmt_compact_number`) are already ≤~10 cells, so dynamic sizing alone keeps
+# them tight. Only the two free-text columns can grow unbounded.
+_COL_CAPS = {_MODEL_COL_INDEX: _MODEL_COL_MAX_WIDTH, _TOOLS_COL_INDEX: _TOOLS_COL_MAX_WIDTH}
+
+# Fallback one-line width used only when the real terminal width can't be
+# detected (see `_detect_terminal_width`). Sized to fit common terminals once
+# Claude Code's left gutter is accounted for.
+_WIDTH_BUDGET = 100
+
+# Cells reserved on the right: Claude Code renders the Stop hook's systemMessage
+# with a small left gutter (~5 cells) plus our own 1-cell leading space, and we
+# want a hair of breathing room so the table never wraps. Subtracted from the
+# detected terminal width to get the table's target width.
+_RENDER_MARGIN = 7
+# Upper bound on table width when filling a detected terminal — keeps an
+# ultrawide screen from scattering columns edge-to-edge.
+_MAX_TABLE_WIDTH = 160
+
+
+def _detect_terminal_width() -> int | None:
+    """Best-effort real terminal width from inside a Stop hook.
+
+    The hook runs as a subprocess whose stdout/stdin are pipes, so the usual
+    `os.get_terminal_size()` returns the 80-col fallback. We instead:
+      1. honour an explicit COLUMNS override, then
+      2. ioctl the controlling pty directly via SSH_TTY / /dev/tty.
+    Returns None when nothing reliable is found (caller then uses a fixed
+    fallback budget and never expands — avoids wrapping on a wrong guess).
+    """
+    c = os.environ.get("COLUMNS")
+    if c and c.isdigit() and int(c) > 0:
+        return int(c)
+    for path in (os.environ.get("SSH_TTY"), "/dev/tty"):
+        if not path:
+            continue
+        try:
+            fd = os.open(path, os.O_RDONLY)
+            try:
+                cols = os.get_terminal_size(fd).columns
+            finally:
+                os.close(fd)
+            if cols > 0:
+                return cols
+        except OSError:
+            continue
+    return None
+
+
+def _fill_gaps(widths: list[int], target: int) -> list[int]:
+    """Inter-column gap sizes that stretch the row to `target` cells.
+
+    Distributes the slack (target − minimal table width) evenly across the
+    n−1 gaps so columns spread edge-to-edge instead of bunching on the left.
+    Never shrinks below `_GAP`. Returns one gap per column boundary."""
+    ngaps = len(widths) - 1
+    if ngaps <= 0:
+        return []
+    gaps = [_GAP] * ngaps
+    base = sum(widths) + _GAP * ngaps + 1  # +1 leading space
+    slack = target - base
+    if slack > 0:
+        add, rem = divmod(slack, ngaps)
+        for i in range(ngaps):
+            gaps[i] += add + (1 if i < rem else 0)
+    return gaps
+# Min width a shrinkable text column may be cut to under budget pressure, so a
+# truncated value ("...") still fits without overflowing the cell.
+_MIN_TRUNC_WIDTH = 5
+# Inter-column spacing. 2 cells keeps numbers from crowding; dynamic sizing
+# already collapses the common row to ~60 cells so the gap costs little.
 _GAP = 2
+
+
+def _compute_widths(header_cells: list[str], body_rows: list[list[str]]) -> list[int]:
+    """Per-column visible width = max(header label, all cell contents), with
+    free-text columns clamped to their cap. Numeric columns are content-sized."""
+    widths: list[int] = []
+    for ci in range(len(header_cells)):
+        w = visual_width(header_cells[ci])
+        for row in body_rows:
+            cw = visual_width(row[ci])
+            if cw > w:
+                w = cw
+        cap = _COL_CAPS.get(ci)
+        if cap is not None and w > cap:
+            w = cap
+        widths.append(w)
+    return widths
+
+
+def _fit_to_budget(widths: list[int], header_cells: list[str], budget: int) -> list[int]:
+    """Shrink flexible columns (tools, then model) until the table fits
+    `budget`. Floors keep the header label readable and leave room for a
+    truncation marker. Numeric columns are never shrunk — cutting them would
+    corrupt the displayed values. If even the floors overflow, accept it (no
+    safe further reduction exists)."""
+    def total() -> int:
+        return sum(widths) + _GAP * (len(widths) - 1) + 1  # +1 leading space
+
+    for ci in (_TOOLS_COL_INDEX, _MODEL_COL_INDEX):
+        over = total() - budget
+        if over <= 0:
+            break
+        floor = max(visual_width(header_cells[ci]), _MIN_TRUNC_WIDTH)
+        cut = min(over, widths[ci] - floor)
+        if cut > 0:
+            widths[ci] -= cut
+    return widths
 
 
 def visual_width(s: str) -> int:
@@ -190,35 +300,12 @@ def format_detail(summary: Summary, language: str) -> str:
         return s["err_empty_turns"]
 
     sub_prefix = s["subagent_row_prefix"]
+    columns = _COLUMNS
+    header_cells = [s[c.key] for c in columns]
 
-    # Compute dynamic model column width: max of header label, all turn
-    # model strings, and all subagent labels (with prefix). Floor at the
-    # default Column width so existing tests keep their truncation behavior.
-    model_default_width = _COLUMNS[_MODEL_COL_INDEX].width
-    candidates: list[str] = [s["col_model"]]
-    for turn in summary.turns:
-        candidates.append(_short_model_name(turn.model))
-        for sub in turn.subagents:
-            candidates.append(_sub_label(sub, sub_prefix))
-    needed_width = max(visual_width(c) for c in candidates)
-    dynamic_model_width = min(
-        _MODEL_COL_MAX_WIDTH, max(model_default_width, needed_width)
-    )
-
-    # Build the resolved column list with the dynamic model width applied.
-    columns = list(_COLUMNS)
-    columns[_MODEL_COL_INDEX] = replace(
-        columns[_MODEL_COL_INDEX], width=dynamic_model_width
-    )
-
-    header_cells = [_pad(s[c.key], c.width, c.align) for c in columns]
-    col_header_row = (" " * _GAP).join(header_cells)
-
-    row_width = visual_width(col_header_row)
-    rule_width = max(row_width, visual_width(s["header_title"]))
-    rule = "━" * rule_width
-
-    rows: list[str] = []
+    # Pass 1: build every row's raw (unpadded) cells so column widths can be
+    # sized to actual content, then fit to the one-line budget.
+    body_rows: list[list[str]] = []
     prior_sum = 0.0
     has_subagents = False
     has_unknown_sub_model = False
@@ -230,7 +317,7 @@ def format_detail(summary: Summary, language: str) -> str:
             prior_sum += t_sec
 
         cost = f"${compute_cost(turn.model, turn):.4f}"
-        cells = [
+        body_rows.append([
             str(turn.index + 1),
             _short_model_name(turn.model),
             _format_tools(turn.tools_used),
@@ -240,9 +327,7 @@ def format_detail(summary: Summary, language: str) -> str:
             _fmt_compact_number(turn.output_tokens),
             cost,
             t_str,
-        ]
-        padded = [_pad(c, col.width, col.align) for c, col in zip(cells, columns)]
-        rows.append((" " * _GAP).join(padded))
+        ])
 
         # Child rows for subagents under this parent turn.
         for sub in turn.subagents:
@@ -256,7 +341,7 @@ def format_detail(summary: Summary, language: str) -> str:
             # Cost: same fallback rule as aggregator (single helper).
             billing_model = effective_billing_model(sub_model, turn.model)
             sub_cost = f"${compute_cost(billing_model, sub):.4f}"
-            sub_cells = [
+            body_rows.append([
                 "",  # # column blank for child rows
                 _sub_label(sub, sub_prefix),
                 "",  # tools column blank for child rows (T6 future)
@@ -266,11 +351,39 @@ def format_detail(summary: Summary, language: str) -> str:
                 _fmt_compact_number(sub.output_tokens),
                 sub_cost,
                 _sub_time_str(sub),
-            ]
-            sub_padded = [
-                _pad(c, col.width, col.align) for c, col in zip(sub_cells, columns)
-            ]
-            rows.append((" " * _GAP).join(sub_padded))
+            ])
+
+    # Pass 2: size columns to content. If the real terminal width is known,
+    # target it (shrink if over, stretch gaps to fill if under) so the table
+    # spans the full width edge-to-edge. Otherwise fall back to a fixed budget
+    # and never stretch (a wrong guess would wrap).
+    widths = _compute_widths(header_cells, body_rows)
+    term_width = _detect_terminal_width()
+    if term_width is not None:
+        # Fill the detected width (minus gutter), but cap so an ultrawide
+        # terminal doesn't scatter columns across the whole screen.
+        target = min(term_width - _RENDER_MARGIN, _MAX_TABLE_WIDTH)
+        widths = _fit_to_budget(widths, header_cells, budget=target)
+        gaps = _fill_gaps(widths, target)
+    else:
+        widths = _fit_to_budget(widths, header_cells, budget=_WIDTH_BUDGET)
+        gaps = [_GAP] * (len(widths) - 1)
+
+    def _render(cells: list[str]) -> str:
+        padded = [
+            _pad(c, w, col.align) for c, w, col in zip(cells, widths, columns)
+        ]
+        out = padded[0] if padded else ""
+        for i in range(1, len(padded)):
+            out += " " * gaps[i - 1] + padded[i]
+        return out
+
+    col_header_row = _render(header_cells)
+    rows = [_render(c) for c in body_rows]
+
+    row_width = visual_width(col_header_row)
+    rule_width = max(row_width, visual_width(s["header_title"]))
+    rule = "━" * rule_width
 
     parts = [
         rule,
