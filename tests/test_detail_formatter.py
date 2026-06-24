@@ -236,8 +236,9 @@ def test_detail_table_alignment_with_subagent_rows():
 # ---------------------------------------------------------------------------
 
 
-def test_subagent_row_shows_model_in_brackets():
+def test_subagent_row_shows_model_in_brackets(monkeypatch):
     """sub.model이 채워진 경우 행 라벨이 'sub: {agent_type} [{short}]' 형식이어야 한다."""
+    monkeypatch.setenv("COLUMNS", "140")  # 라벨이 다 들어갈 만큼 넓은 터미널 가정
     turn = _turn()
     turn.subagents = [_sub(agent_type="general-purpose")]
     turn.subagents[0].model = "claude-sonnet-4-6"
@@ -507,3 +508,16 @@ def test_model_column_grows_for_long_subagent_label_on_wide_terminal(monkeypatch
     # 긴 agent_type 가 잘리지 않고 (… 없이) 그대로 렌더된다.
     assert long_type in out
     assert "..." not in out
+
+
+def test_numeric_columns_have_minimum_width():
+    """숫자 컬럼(input~시간)은 짧은 값이라도 _NUM_MIN_WIDTH 이상 폭을 갖는다."""
+    from lib.detail_formatter import (
+        _NUM_COL_INDICES, _NUM_MIN_WIDTH, _compute_widths,
+    )
+    # 모든 셀이 1글자인 행 — floor 없으면 숫자 컬럼이 1~2칸으로 쪼그라든다.
+    header = ["#", "m", "t", "in", "cc", "cr", "out", "$", "T"]
+    rows = [["1", "x", "y", "2", "4", "7", "3", "1", "5"]]
+    widths = _compute_widths(header, rows)
+    for ci in _NUM_COL_INDICES:
+        assert widths[ci] >= _NUM_MIN_WIDTH

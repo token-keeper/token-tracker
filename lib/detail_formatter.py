@@ -70,6 +70,13 @@ _TOOLS_COL_MAX_WIDTH = 28  # cap tools list so one busy turn can't blow up width
 # them tight. Only the two free-text columns can grow unbounded.
 _COL_CAPS = {_MODEL_COL_INDEX: _MODEL_COL_MAX_WIDTH, _TOOLS_COL_INDEX: _TOOLS_COL_MAX_WIDTH}
 
+# Numeric columns (input, cc, cr, output, cost, time). Index (#) and the two
+# free-text columns are excluded.
+_NUM_COL_INDICES = (3, 4, 5, 6, 7, 8)
+# Minimum visible width for a numeric column, so short values ("2", "747") and
+# narrow headers (cc/cr) still get a roomy cell instead of crowding together.
+_NUM_MIN_WIDTH = 8
+
 # Fallback one-line width used only when the real terminal width can't be
 # detected (see `_detect_terminal_width`). Sized to fit common terminals once
 # Claude Code's left gutter is accounted for.
@@ -175,6 +182,8 @@ def _compute_widths(
         cap = caps.get(ci)
         if cap is not None and w > cap:
             w = cap
+        if ci in _NUM_COL_INDICES and w < _NUM_MIN_WIDTH:
+            w = _NUM_MIN_WIDTH  # floor so short numbers get a roomy cell
         widths.append(w)
     return widths
 
