@@ -521,3 +521,43 @@ def test_numeric_columns_have_minimum_width():
     widths = _compute_widths(header, rows)
     for ci in _NUM_COL_INDICES:
         assert widths[ci] >= _NUM_MIN_WIDTH
+
+
+# ---------------------------------------------------------------------------
+# subagent tools column: real names, MCP shortening, em-dash when empty
+# ---------------------------------------------------------------------------
+
+
+def test_short_tool_name_shortens_mcp():
+    from lib.detail_formatter import _short_tool_name
+    assert _short_tool_name("mcp__claude_ai_Notion__notion-fetch") == "notion-fetch"
+    assert _short_tool_name("mcp__plugin_pw_pw__browser_click") == "browser_click"
+    assert _short_tool_name("Bash") == "Bash"
+    assert _short_tool_name("mcp__weird") == "mcp__weird"  # too few segments
+
+
+def test_subagent_row_renders_tools_with_mcp_shortened(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    turn = _turn(model="claude-opus-4-8", tools_used=[{"name": "Agent", "count": 1}])
+    sub = _sub(agent_type="general-purpose", model="claude-haiku-4-5-20251001")
+    sub.tools_used = [
+        {"name": "mcp__claude_ai_Notion__notion-fetch", "count": 12},
+        {"name": "Bash", "count": 1},
+    ]
+    turn.subagents = [sub]
+    out = format_detail(_summary([turn]), "ko")
+    child = next(l for l in out.splitlines() if "└" in l)
+    assert "notion-fetch×12" in child
+    assert "Bash×1" in child
+    assert "mcp__" not in child  # full MCP id never shown
+
+
+def test_subagent_row_shows_dash_when_no_tools(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    turn = _turn(model="claude-opus-4-8", tools_used=[{"name": "Agent", "count": 1}])
+    sub = _sub(agent_type="Explore", model="claude-opus-4-8")
+    sub.tools_used = []
+    turn.subagents = [sub]
+    out = format_detail(_summary([turn]), "ko")
+    child = next(l for l in out.splitlines() if "└" in l)
+    assert "—" in child

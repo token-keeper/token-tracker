@@ -42,10 +42,18 @@ class SubagentUsage:
     total_duration_ms: int = 0
     # Model used by this subagent run. Sources (in priority order):
     #   1. async sub: sidechain jsonl `assistant.message.model` (most accurate)
-    #   2. foreground sub: main jsonl Agent `tool_use.input.model` (only when
-    #      caller dispatched with `model:` explicitly)
+    #   2. foreground sub: main jsonl Agent `toolUseResult.resolvedModel`
+    #      (always present), or dispatch `input.model` when set explicitly
     #   3. unknown: empty string → aggregator falls back to parent turn model
     model: str = ""
+    # Claude Code agent id (foreground: toolUseResult.agentId). Used to locate
+    # this sub's sidechain transcript (`{session}/subagents/agent-{id}.jsonl`)
+    # for real per-tool names. Empty when not derivable.
+    agent_id: str = ""
+    # Tools this subagent invoked, as [{"name": str, "count": int}]. Filled
+    # from the sub's sidechain transcript when available (real names incl MCP);
+    # falls back to bucketed `toolStats` counts for foreground subs.
+    tools_used: list[dict] = field(default_factory=list)
 
 
 def _iso_to_epoch(iso: str) -> float | None:
@@ -201,7 +209,40 @@ def parse_tool_result_for_agent(entry: dict) -> SubagentUsage | None:
         cache_creation_1h_tokens=cache_1h,
         cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
         total_duration_ms=int(tur.get("totalDurationMs", 0) or 0),
+        model=str(tur.get("resolvedModel", "") or ""),
+        agent_id=str(tur.get("agentId", "") or ""),
+        tools_used=_tools_from_tool_stats(tur.get("toolStats")),
     )
+
+
+# toolStats bucket key → display name. Foreground subs only expose these
+# coarse buckets (no per-tool names), so they are a fallback used when the
+# sub's sidechain transcript (real names, incl MCP) is unavailable. MCP and
+# other non-bucketed calls land in `otherToolCount` → "기타".
+_TOOL_STAT_BUCKETS = [
+    ("readCount", "Read"),
+    ("editFileCount", "Edit"),
+    ("bashCount", "Bash"),
+    ("searchCount", "Search"),
+    ("otherToolCount", "기타"),
+]
+
+
+def _tools_from_tool_stats(stats: object) -> list[dict]:
+    """Map a `toolStats` dict to [{"name", "count"}] for nonzero buckets.
+
+    Order follows `_TOOL_STAT_BUCKETS`. Non-dict / missing → empty list."""
+    if not isinstance(stats, dict):
+        return []
+    out: list[dict] = []
+    for key, label in _TOOL_STAT_BUCKETS:
+        try:
+            n = int(stats.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n > 0:
+            out.append({"name": label, "count": n})
+    return out
 
 
 def parse_async_launch(entry: dict) -> tuple[str, str] | None:

@@ -102,6 +102,7 @@ def main() -> int:
         from lib.formatter import format_summary
         from lib.sidechain import (
             collect_sidechain_subagents,
+            collect_sub_tool_names,
             count_active_async_agents_from_file,
             extract_async_launches_from_file,
             find_sidechain_dir,
@@ -186,6 +187,18 @@ def main() -> int:
         for s in fg_subs:
             if not s.model and s.tool_use_id in tu_to_model:
                 s.model = tu_to_model[s.tool_use_id]
+
+        # Upgrade each sub's tools_used from coarse toolStats buckets to the
+        # real tool names (incl MCP) recorded in its sidechain transcript.
+        # Every sub (fg + async) writes `{session}/subagents/agent-{id}.jsonl`.
+        # Missing/unreadable file → keep the bucket fallback.
+        if sidechain_dir is not None:
+            for s in fg_subs + async_subs:
+                if not s.agent_id:
+                    continue
+                real_tools = collect_sub_tool_names(sidechain_dir, s.agent_id)
+                if real_tools:
+                    s.tools_used = real_tools
 
         elapsed = max(0.0, time.time() - started_at)
         summary = aggregate(turns, elapsed=elapsed, subagents=fg_subs + async_subs)

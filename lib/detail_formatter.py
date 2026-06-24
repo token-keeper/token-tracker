@@ -275,10 +275,25 @@ def _fmt_cc(n: int) -> str:
     return _fmt_compact_number(n, low_threshold=True)
 
 
+def _short_tool_name(name: str) -> str:
+    """Compact display name for a tool.
+
+    MCP tools arrive as `mcp__{server}__{tool}` (e.g.
+    `mcp__claude_ai_Notion__notion-fetch`) which is far too wide for the
+    column. Keep only the final `{tool}` segment (`notion-fetch`). Non-MCP
+    names pass through unchanged.
+    """
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        if len(parts) >= 3 and parts[-1]:
+            return parts[-1]
+    return name
+
+
 def _format_tools(tools: list[dict]) -> str:
     if not tools:
         return "—"
-    rendered = [f"{t['name']}×{t['count']}" for t in tools]
+    rendered = [f"{_short_tool_name(t['name'])}×{t['count']}" for t in tools]
     if len(rendered) <= 3:
         return ",".join(rendered)
     shown = rendered[:3]
@@ -376,7 +391,7 @@ def format_detail(summary: Summary, language: str) -> str:
             body_rows.append([
                 "",  # # column blank for child rows
                 _sub_label(sub, sub_prefix),
-                "",  # tools column blank for child rows (T6 future)
+                _format_tools(getattr(sub, "tools_used", [])),
                 _fmt_compact_number(sub.input_tokens),
                 _fmt_cc(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens),
                 _fmt_compact_number(sub.cache_read_tokens),
