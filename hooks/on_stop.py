@@ -86,14 +86,27 @@ def _is_cn_wake_stop(entries: list[dict]) -> bool:
     예전 `isMeta:true` 가정 기반 가드는 이 함수가 항상 False 를 반환해 wake Stop
     을 못 잡았다(직전 turn 토큰 재표시 버그). content substring 으로 판정한다.
     """
-    for e in reversed(entries):
+    return _cn_wake_ping_index(entries) >= 0
+
+
+def _cn_wake_ping_index(entries: list[dict]) -> int:
+    """가장 최근 user 엔트리가 cn wake ping 이면 그 인덱스, 아니면 -1.
+
+    `_is_cn_wake_stop` 과 동일한 판정(content substring 2개)을 쓰되, 인덱스를
+    돌려준다. wake turn 만 독립 집계하려면 ping 이후 엔트리를 슬라이스해야 하므로
+    그 경계 인덱스가 필요하다(직전 실제 turn 재합산 방지).
+    """
+    for i in range(len(entries) - 1, -1, -1):
+        e = entries[i]
         if e.get("type") != "user":
             continue
         msg = e.get("message") or {}
         content = msg.get("content")
         text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-        return "[cn:keepalive" in text and "Stop hook blocking error" in text
-    return False
+        if "[cn:keepalive" in text and "Stop hook blocking error" in text:
+            return i
+        return -1  # 최근 user 엔트리가 진짜 프롬프트 → wake 아님
+    return -1
 
 
 def main() -> int:
@@ -171,11 +184,52 @@ def main() -> int:
         if not has_state and not turns:
             return 0
 
-        # cache-necromancer auto-wake 로 발생한 Stop 은 사용자가 만든 turn 이
-        # 아니라 시스템 잡음이다. early return 으로 aggregate/history/emit 모두
-        # 건너뛰어 직전 실제 turn 의 토큰이 재표시되는 것을 막는다 (last_summary·
-        # history 오염도 방지 — 의도된 동작).
-        if _is_cn_wake_stop(entries):
+        # cache-necromancer auto-wake 로 발생한 Stop: 이 turn 도 토큰을 쓴다
+        # (cache-read 재적재 + "ok" 응답). 직전 실제 turn 을 재합산하면 안 되므로
+        # (= 원래 버그) ping 이후 엔트리만 떼어 **wake turn 만** 독립 집계해 표시한다.
+        # last_summary·history 는 저장하지 않는다 — wake 는 사용자 turn 이 아니라
+        # /token-history 등 다운스트림에 섞이면 안 된다.
+        wake_idx = _cn_wake_ping_index(entries)
+        if wake_idx >= 0:
+            wake_turns = [
+                t for t in (parse_line(e) for e in entries[wake_idx + 1:]) if t is not None
+            ]
+            # wake assistant 라인이 아직 flush 안 됐으면 짧게 재시도(최대 500ms).
+            w_retries = 0
+            while not wake_turns and w_retries < 5:
+                time.sleep(0.1)
+                re_entries = _read_tail(transcript_path, offset)
+                re_idx = _cn_wake_ping_index(re_entries)
+                if re_idx < 0:
+                    break
+                wake_turns = [
+                    t
+                    for t in (parse_line(e) for e in re_entries[re_idx + 1:])
+                    if t is not None
+                ]
+                w_retries += 1
+            if not wake_turns:
+                return 0  # 응답 미flush → 침묵 (다음 Stop 도 없음, 1회성 손실 수용)
+
+            # wake turn 자체 wall-clock = ping 시각 → 지금. (started_at 이 직전 실제
+            # 프롬프트에 고착돼 있어 그대로 쓰면 elapsed 가 부풀려진다 — 원래 버그의
+            # "51m 39s" 증상.)
+            wake_started = wake_turns[0].started_at or started_at
+            wake_elapsed = max(0.0, time.time() - wake_started)
+            wake_summary = aggregate(wake_turns, elapsed=wake_elapsed)
+
+            from lib.config import load_config, get_language, is_verbose
+
+            cfg = load_config(plugin_root)
+            lang = get_language(cfg)
+            verbose = is_verbose(cfg, os.environ.get("TOKEN_TRACKER_VERBOSE"))
+            head = "🪦 캐시 연장 turn" if lang == "ko" else "🪦 cache keepalive turn"
+            wmsg = head + "\n" + format_summary(wake_summary, lang)
+            if verbose and wake_summary.turns:
+                from lib.detail_formatter import format_detail
+
+                wmsg = wmsg + "\n" + format_detail(wake_summary, lang)
+            _emit(wmsg)
             return 0
 
         # Async subagents: extracted from sidechain jsonl files when available.
