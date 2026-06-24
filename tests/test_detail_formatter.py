@@ -76,7 +76,10 @@ def test_tools_over_three_shows_ellipsis():
     assert "...+2" in out
 
 
-def test_long_model_name_truncated():
+def test_long_model_name_truncated(monkeypatch):
+    # 좁은 터미널에선 긴 모델명이 들어갈 자리가 없어 잘린다 (동적 width 하에서
+    # 트렁케이션은 '안 들어갈 때만' 발생).
+    monkeypatch.setenv("COLUMNS", "60")
     long_name = "claude-opus-" + "x" * 30
     out = format_detail(_summary([_turn(model=long_name)]), "ko")
     assert "..." in out
@@ -465,3 +468,42 @@ def test_format_detail_renders_all_turn_rows():
         if l.strip() and l.strip()[0].isdigit()
     ]
     assert row_starts == ["1", "2", "3", "4"]
+
+
+def test_flex_columns_absorb_terminal_slack_numeric_tail_fixed(monkeypatch):
+    """넓은 터미널에서 슬랙은 flex 컬럼(모델+툴)이 흡수한다 — 숫자 컬럼은
+    content-sized, 간격(_GAP)도 고정. 따라서 첫 숫자 컬럼부터 행 끝까지의 tail
+    문자열은 터미널 폭과 무관하게 동일하고, 모델/툴만 넓어져 행이 길어진다."""
+    turn = _turn(
+        model="claude-opus-4-8", input_tokens=1234, output_tokens=4200,
+        cache_creation_5m_tokens=5000, cache_read_tokens=99000,
+        tools_used=[{"name": "Bash", "count": 3}, {"name": "Read", "count": 2}],
+    )
+
+    def row_for(cols):
+        monkeypatch.setenv("COLUMNS", str(cols))
+        out = format_detail(_summary([turn]), "ko")
+        return next(l for l in out.splitlines() if l.strip().startswith("1 "))
+
+    narrow, wide = row_for(80), row_for(160)
+    # flex 컬럼이 넓어진 만큼 행 전체가 길어진다.
+    assert visual_width(wide) > visual_width(narrow)
+    # 첫 숫자 컬럼(input "1,234")부터 끝까지 tail 은 두 폭에서 동일.
+    tail_n = narrow[narrow.index("1,234"):]
+    tail_w = wide[wide.index("1,234"):]
+    assert tail_n == tail_w
+
+
+def test_model_column_grows_for_long_subagent_label_on_wide_terminal(monkeypatch):
+    """서브에이전트가 모델 컬럼 라벨을 길게 만들면, 넓은 터미널에서 모델 컬럼이
+    잘리지 않고 전체가 보여야 한다 (모델도 동적 width)."""
+    long_type = "very-long-subagent-agent-type-name-that-needs-room"
+    sub = _sub(agent_type=long_type, model="claude-opus-4-8")
+    turn = _turn(model="claude-opus-4-8", tools_used=[{"name": "Bash", "count": 1}])
+    turn.subagents = [sub]
+
+    monkeypatch.setenv("COLUMNS", "200")
+    out = format_detail(_summary([turn]), "ko")
+    # 긴 agent_type 가 잘리지 않고 (… 없이) 그대로 렌더된다.
+    assert long_type in out
+    assert "..." not in out

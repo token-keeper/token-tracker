@@ -114,23 +114,36 @@ def _detect_terminal_width() -> int | None:
     return None
 
 
-def _fill_gaps(widths: list[int], target: int) -> list[int]:
-    """Inter-column gap sizes that stretch the row to `target` cells.
+# Flex columns that absorb leftover budget — the two free-text columns whose
+# content length is unbounded (model labels grow with subagent rows; tools
+# lists grow with busy turns). Numeric columns stay content-sized.
+_FLEX_COL_INDICES = (_MODEL_COL_INDEX, _TOOLS_COL_INDEX)
 
-    Distributes the slack (target − minimal table width) evenly across the
-    n−1 gaps so columns spread edge-to-edge instead of bunching on the left.
-    Never shrinks below `_GAP`. Returns one gap per column boundary."""
-    ngaps = len(widths) - 1
-    if ngaps <= 0:
-        return []
-    gaps = [_GAP] * ngaps
-    base = sum(widths) + _GAP * ngaps + 1  # +1 leading space
+
+def _grow_flex_to_fill(widths: list[int], target: int) -> list[int]:
+    """Distribute leftover budget across the flex columns (model + tools).
+
+    The slack (target − minimal table width) is split between the two free-text
+    columns in proportion to their current width, so the column that already
+    holds more content grows more. Every other column stays content-sized and
+    gaps stay tight at `_GAP`. No-op when there is no slack."""
+    base = sum(widths) + _GAP * (len(widths) - 1) + 1  # +1 leading space
     slack = target - base
-    if slack > 0:
-        add, rem = divmod(slack, ngaps)
-        for i in range(ngaps):
-            gaps[i] += add + (1 if i < rem else 0)
-    return gaps
+    if slack <= 0:
+        return widths
+    weight_total = sum(widths[i] for i in _FLEX_COL_INDICES)
+    if weight_total <= 0:  # both empty — split evenly
+        add, rem = divmod(slack, len(_FLEX_COL_INDICES))
+        for k, i in enumerate(_FLEX_COL_INDICES):
+            widths[i] += add + (1 if k < rem else 0)
+        return widths
+    given = 0
+    for i in _FLEX_COL_INDICES[:-1]:
+        share = slack * widths[i] // weight_total
+        widths[i] += share
+        given += share
+    widths[_FLEX_COL_INDICES[-1]] += slack - given  # last col takes remainder
+    return widths
 # Min width a shrinkable text column may be cut to under budget pressure, so a
 # truncated value ("...") still fits without overflowing the cell.
 _MIN_TRUNC_WIDTH = 5
@@ -139,9 +152,19 @@ _MIN_TRUNC_WIDTH = 5
 _GAP = 2
 
 
-def _compute_widths(header_cells: list[str], body_rows: list[list[str]]) -> list[int]:
-    """Per-column visible width = max(header label, all cell contents), with
-    free-text columns clamped to their cap. Numeric columns are content-sized."""
+def _compute_widths(
+    header_cells: list[str],
+    body_rows: list[list[str]],
+    caps: dict[int, int] | None = None,
+) -> list[int]:
+    """Per-column visible width = max(header label, all cell contents).
+
+    When `caps` is given, free-text columns are clamped to their cap (used by
+    the fixed-budget fallback so unbounded content can't blow up the table).
+    When `caps` is None, columns are sized to full content — the real-terminal
+    path relies on `_fit_to_budget` to shrink instead, so model/tools can show
+    their full text whenever the terminal is wide enough."""
+    caps = caps or {}
     widths: list[int] = []
     for ci in range(len(header_cells)):
         w = visual_width(header_cells[ci])
@@ -149,7 +172,7 @@ def _compute_widths(header_cells: list[str], body_rows: list[list[str]]) -> list
             cw = visual_width(row[ci])
             if cw > w:
                 w = cw
-        cap = _COL_CAPS.get(ci)
+        cap = caps.get(ci)
         if cap is not None and w > cap:
             w = cap
         widths.append(w)
@@ -357,15 +380,19 @@ def format_detail(summary: Summary, language: str) -> str:
     # target it (shrink if over, stretch gaps to fill if under) so the table
     # spans the full width edge-to-edge. Otherwise fall back to a fixed budget
     # and never stretch (a wrong guess would wrap).
-    widths = _compute_widths(header_cells, body_rows)
     term_width = _detect_terminal_width()
     if term_width is not None:
         # Fill the detected width (minus gutter), but cap so an ultrawide
-        # terminal doesn't scatter columns across the whole screen.
+        # terminal doesn't scatter columns across the whole screen. Size flex
+        # columns to full content (no caps), shrink to fit if over, then split
+        # any leftover between model + tools so both grow dynamically.
+        widths = _compute_widths(header_cells, body_rows)
         target = min(term_width - _RENDER_MARGIN, _MAX_TABLE_WIDTH)
         widths = _fit_to_budget(widths, header_cells, budget=target)
-        gaps = _fill_gaps(widths, target)
+        widths = _grow_flex_to_fill(widths, target)
+        gaps = [_GAP] * (len(widths) - 1)
     else:
+        widths = _compute_widths(header_cells, body_rows, caps=_COL_CAPS)
         widths = _fit_to_budget(widths, header_cells, budget=_WIDTH_BUDGET)
         gaps = [_GAP] * (len(widths) - 1)
 
