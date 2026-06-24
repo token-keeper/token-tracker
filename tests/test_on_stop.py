@@ -118,7 +118,32 @@ def test_no_user_entry_returns_false():
     assert _is_cn_wake_stop([]) is False
 
 
-# --- main() integration: cn wake Stop stays silent --------------------------
+# --- main() integration: cn wake Stop 은 wake turn 만 표시 -------------------
+
+
+def _assistant_turn(
+    *, cache_read=304_000, output=12, ts="2026-06-23T12:00:00.000Z", mid="msg_wake"
+):
+    """wake turn 의 assistant 응답("ok ...") 엔트리 — usage 포함."""
+    return {
+        "type": "assistant",
+        "timestamp": ts,
+        "message": {
+            "role": "assistant",
+            "model": "claude-opus-4-8",
+            "id": mid,
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": output,
+                "cache_read_input_tokens": cache_read,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 0,
+                },
+            },
+            "content": [{"type": "text", "text": "ok @21:26 (1/5)"}],
+        },
+    }
 
 
 def _run_stop(payload: dict, env: dict) -> subprocess.CompletedProcess:
@@ -132,16 +157,20 @@ def _run_stop(payload: dict, env: dict) -> subprocess.CompletedProcess:
     )
 
 
-def test_cn_wake_stop_emits_nothing(tmp_path, monkeypatch):
-    """가장 최근 user 엔트리가 cn keepalive wake 면 on_stop 은 침묵(미출력)하고
-    last_summary·history 도 건드리지 않는다(early return → 오염 방지)."""
+def test_cn_wake_emits_wake_turn_only(tmp_path, monkeypatch):
+    """cn wake Stop 은 침묵하지 않고 wake turn '만' 집계해 표시한다.
+    직전 실제 turn(fixture)을 재합산하지 않으며(turns==1), last_summary·history
+    도 오염시키지 않는다(wake 는 사용자 turn 이 아님)."""
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     session_path = tmp_path / "session.jsonl"
-    # 실제 turn(fixture) 뒤에 cn wake 엔트리(Claude Code 실측 형식)를 덧붙인다.
+    # fixture(실제 turn들) 뒤에 [cn wake ping] + [wake assistant 응답] 을 덧붙인다.
     lines = FIXTURE.read_text(encoding="utf-8").splitlines()
-    wake = json.dumps(_cn_wake(), ensure_ascii=False)
-    session_path.write_text("\n".join(lines + [wake]) + "\n", encoding="utf-8")
+    ping = json.dumps(_cn_wake(), ensure_ascii=False)
+    wake_assistant = json.dumps(_assistant_turn(), ensure_ascii=False)
+    session_path.write_text(
+        "\n".join(lines + [ping, wake_assistant]) + "\n", encoding="utf-8"
+    )
 
     env = os.environ.copy()
     env["HOME"] = str(fake_home)
@@ -154,15 +183,42 @@ def test_cn_wake_stop_emits_nothing(tmp_path, monkeypatch):
     }
     r = _run_stop(payload, env)
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "", f"expected silence, got: {r.stdout!r}"
+    out = json.loads(r.stdout)
+    msg = out["systemMessage"]
+    assert "🪦 캐시 연장 turn" in msg, msg
+    # wake turn 만 — fixture 의 turn 들을 재합산하지 않았음을 turn 수로 검증.
+    assert "· 1 turns" in msg, msg
 
-    # 같은 fake HOME 으로 store 를 조회해 side-effect 미발생을 검증한다.
+    # wake 는 last_summary·history 를 오염시키지 않는다.
     monkeypatch.setenv("HOME", str(fake_home))
     from lib.summary_store import load_last_summary
     from lib.history_store import load_session_history
 
     assert load_last_summary("cn-wake-1") is None
     assert load_session_history("cn-wake-1") == []
+
+
+def test_cn_wake_without_assistant_yet_stays_silent(tmp_path):
+    """ping 만 있고 wake assistant 응답이 아직 flush 안 됐으면 침묵(1회성 손실)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_path = tmp_path / "session.jsonl"
+    lines = FIXTURE.read_text(encoding="utf-8").splitlines()
+    ping = json.dumps(_cn_wake(), ensure_ascii=False)
+    session_path.write_text("\n".join(lines + [ping]) + "\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    payload = {
+        "session_id": "cn-wake-2",
+        "transcript_path": str(session_path),
+        "cwd": str(tmp_path),
+        "hook_event_name": "Stop",
+    }
+    r = _run_stop(payload, env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "", f"expected silence, got: {r.stdout!r}"
 
 
 def test_real_stop_still_emits(tmp_path):
