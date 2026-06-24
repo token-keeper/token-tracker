@@ -66,14 +66,19 @@ def test_tools_empty_shows_dash():
     assert "—" in out
 
 
-def test_tools_over_three_shows_ellipsis():
+def test_many_tools_all_shown_via_wrap(monkeypatch):
+    # 툴이 많아도 (+N 축약 없이) 전부 표시된다 — 넓은 터미널이면 한 줄,
+    # 좁으면 개행(wrap)으로 흐른다.
+    monkeypatch.setenv("COLUMNS", "160")
     turn = _turn(tools_used=[
         {"name": "A", "count": 1}, {"name": "B", "count": 1},
         {"name": "C", "count": 1}, {"name": "D", "count": 1},
         {"name": "E", "count": 1},
     ])
     out = format_detail(_summary([turn]), "ko")
-    assert "...+2" in out
+    for name in ("A×1", "B×1", "C×1", "D×1", "E×1"):
+        assert name in out
+    assert "...+" not in out  # 축약 폐기됨
 
 
 def test_long_model_name_truncated(monkeypatch):
@@ -236,26 +241,30 @@ def test_detail_table_alignment_with_subagent_rows():
 # ---------------------------------------------------------------------------
 
 
-def test_subagent_row_shows_model_in_brackets(monkeypatch):
-    """sub.model이 채워진 경우 행 라벨이 'sub: {agent_type} [{short}]' 형식이어야 한다."""
-    monkeypatch.setenv("COLUMNS", "140")  # 라벨이 다 들어갈 만큼 넓은 터미널 가정
+def test_subagent_row_model_column_shows_sub_model(monkeypatch):
+    """sub.model이 채워지면 모델 컬럼은 '└ sub: {short}', agent_type 은 툴 컬럼
+    첫 줄로 분리된다 (대괄호 형식 폐기)."""
+    monkeypatch.setenv("COLUMNS", "140")
     turn = _turn()
     turn.subagents = [_sub(agent_type="general-purpose")]
     turn.subagents[0].model = "claude-sonnet-4-6"
     out = format_detail(_summary([turn]), "ko")
     child_line = next(l for l in out.splitlines() if "└" in l)
-    assert "sub: general-purpose" in child_line
-    assert "[sonnet 4.6]" in child_line
+    assert "sub: sonnet 4.6" in child_line   # 모델 컬럼
+    assert "general-purpose" in child_line    # agent_type = 툴 컬럼 첫 줄
+    assert "[sonnet 4.6]" not in child_line   # 대괄호 형식 폐기
 
 
-def test_subagent_row_omits_brackets_when_model_unknown():
-    """sub.model이 빈 문자열이면 대괄호 영역 자체가 출력되지 않아야 한다."""
+def test_subagent_row_shows_question_mark_when_model_unknown(monkeypatch):
+    """sub.model이 빈 문자열이면 모델 컬럼은 '└ sub: ?' (부모 단가 폴백 신호)."""
+    monkeypatch.setenv("COLUMNS", "140")
     turn = _turn()
     turn.subagents = [_sub(agent_type="general-purpose")]
     turn.subagents[0].model = ""
     out = format_detail(_summary([turn]), "ko")
     child_line = next(l for l in out.splitlines() if "└" in l)
-    assert "sub: general-purpose" in child_line
+    assert "sub: ?" in child_line
+    assert "general-purpose" in child_line  # agent_type 은 툴 컬럼
     assert "[" not in child_line
 
 
@@ -554,8 +563,8 @@ def test_narrow_terminal_reclaims_numeric_floor_without_truncating(monkeypatch):
 
 def test_short_tool_name_shortens_mcp():
     from lib.detail_formatter import _short_tool_name
-    assert _short_tool_name("mcp__claude_ai_Notion__notion-fetch") == "notion-fetch"
-    assert _short_tool_name("mcp__plugin_pw_pw__browser_click") == "browser_click"
+    assert _short_tool_name("mcp__claude_ai_Notion__notion-fetch") == "mcp:notion-fetch"
+    assert _short_tool_name("mcp__plugin_pw_pw__browser_click") == "mcp:browser_click"
     assert _short_tool_name("Bash") == "Bash"
     assert _short_tool_name("mcp__weird") == "mcp__weird"  # too few segments
 
@@ -570,10 +579,10 @@ def test_subagent_row_renders_tools_with_mcp_shortened(monkeypatch):
     ]
     turn.subagents = [sub]
     out = format_detail(_summary([turn]), "ko")
-    child = next(l for l in out.splitlines() if "└" in l)
-    assert "notion-fetch×12" in child
-    assert "Bash×1" in child
-    assert "mcp__" not in child  # full MCP id never shown
+    # 툴은 agent_type 다음 줄(들)에 wrap — 전체 출력에서 검사
+    assert "mcp:notion-fetch×12" in out
+    assert "Bash×1" in out
+    assert "mcp__" not in out  # full MCP id never shown
 
 
 def test_subagent_row_shows_dash_when_no_tools(monkeypatch):
@@ -583,5 +592,31 @@ def test_subagent_row_shows_dash_when_no_tools(monkeypatch):
     sub.tools_used = []
     turn.subagents = [sub]
     out = format_detail(_summary([turn]), "ko")
-    child = next(l for l in out.splitlines() if "└" in l)
-    assert "—" in child
+    # agent_type 'Explore' 다음 줄에 '—'
+    assert "Explore" in out
+    assert "—" in out
+
+
+def test_layout5_sub_structure(monkeypatch):
+    """레이아웃 ⑤ 구조 잠금: 모델 컬럼='└ sub: {model}', 툴 컬럼 첫 줄=agent_type,
+    그 다음 줄(들)=툴 wrap, 숫자는 agent_type 줄에만."""
+    monkeypatch.setenv("COLUMNS", "120")
+    turn = _turn(model="claude-opus-4-8", tools_used=[{"name": "Agent", "count": 1}])
+    sub = _sub(agent_type="general-purpose", model="claude-opus-4-8")
+    sub.tools_used = [
+        {"name": "mcp__claude_ai_Notion__notion-fetch", "count": 3},
+        {"name": "Read", "count": 1},
+    ]
+    turn.subagents = [sub]
+    lines = format_detail(_summary([turn]), "ko").splitlines()
+    # agent_type 줄 = '└' 포함 + 모델 컬럼에 'sub: opus 4.8' + 툴 첫 줄 'general-purpose' + 숫자
+    head = next(l for l in lines if "└" in l)
+    assert "sub: opus 4.8" in head
+    assert "general-purpose" in head
+    assert "368" in head  # output 숫자 = 첫 줄에만
+    # 그 다음 줄 = 툴 continuation (숫자 없음)
+    hi = lines.index(head)
+    cont = lines[hi + 1]
+    assert "mcp:notion-fetch×3" in cont or "Read×1" in cont
+    assert "368" not in cont  # 숫자는 continuation 에 없음
+    assert "└" not in cont    # continuation 은 새 sub 아님

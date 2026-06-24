@@ -2371,10 +2371,11 @@ def test_async_subagent_tools_attributed_to_one_row_only(tmp_path):
     r = _run("on_stop.py", payload, env)
     assert r.returncode == 0, r.stderr
     msg = json.loads(r.stdout)["systemMessage"]
+    # 두 async sub → 모델 컬럼 '└ sub: ...' 행이 2개 (agent_type 은 툴 컬럼 첫 줄).
     sub_rows = [l for l in msg.splitlines() if "└" in l]
     assert len(sub_rows) == 2, f"expected 2 async sub rows, got: {sub_rows}"
-    # Tools appear on exactly one row; the other shows the em-dash.
-    joined = "\n".join(sub_rows)
-    assert "Bash×1" in joined and "Read×1" in joined
-    assert sum(("Bash×1" in row) for row in sub_rows) == 1
-    assert any("—" in row for row in sub_rows)
+    # 툴은 agent_type 다음 continuation 줄에 wrap — 전체 msg 에서 검사.
+    # dedup: agent 전체 툴은 첫 행에만 한 번, 나머지 행은 '—'.
+    assert "Bash×1" in msg and "Read×1" in msg
+    assert msg.count("Bash×1") == 1 and msg.count("Read×1") == 1
+    assert "—" in msg
