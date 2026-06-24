@@ -61,25 +61,38 @@ def _read_tail(transcript_path: str, offset: int) -> list[dict]:
 def _is_cn_wake_stop(entries: list[dict]) -> bool:
     """이 Stop 이 cache-necromancer auto-wake turn 에서 fire 됐는지 판정.
 
-    cache-necromancer 의 wake 는 Stop hook 의 stderr ping 으로 Claude 를
-    재기동하며(UserPromptSubmit 미경유), Claude Code 는 이 wake 를 transcript 에
-    `type:user, isMeta:true`, content 에 `[cn:keepalive ...]` 를 포함한
-    "Stop hook feedback" 엔트리로 기록한다. offset 윈도우의 가장 최근 user
-    엔트리가 이 wake ping 이면, 이 Stop 은 실제 사용자 입력이 아니라 wake turn
-    에서 fire 된 것 → emit 억제(직전 turn 토큰 재표시 방지).
+    cache-necromancer 의 wake 는 Stop hook 의 exit-2 + stderr ping 으로 Claude 를
+    재기동한다(UserPromptSubmit 미경유). Claude Code 는 이 ping 을 transcript 에
+    **isMeta 없는 일반 `type:user` 엔트리**로 기록하며, content 는 Claude Code 가
+    생성한 래퍼다 (실측 형식):
 
-    - isMeta 게이트 필수: 진짜 프롬프트에 우연히 같은 문자열이 들어가도 억제 X.
-    - 마커는 `[cn:keepalive` 접두사로 한정 (`[cn:warn]` 등 다른 cn stderr 제외).
+        <task-notification><summary>Stop hook feedback</summary></task-notification>
+        <system-reminder>
+        Stop hook blocking error from command "Stop": ... [cn:keepalive HH:MM, N/M] ...
+        </system-reminder>
+
+    offset 윈도우의 가장 최근 user 엔트리가 이 wake ping 이면, 이 Stop 은 실제
+    사용자 입력이 아니라 wake turn 에서 fire 된 것 → emit 억제(직전 turn 토큰
+    재표시 방지).
+
+    탐지 시그니처(둘 다 충족해야 함):
+      1. `[cn:keepalive`            — cache-necromancer 가 주입한 wake 마커.
+         (`[cn:warn]` 등 keepalive 아닌 cn stderr 는 단독으로 매칭되지 않음)
+      2. `Stop hook blocking error` — Claude Code 가 Stop hook exit-2 에 붙이는
+         래퍼. 사용자가 직접 친 프롬프트에는 들어가지 않으므로, 프롬프트에 우연히
+         `[cn:keepalive` 텍스트가 있어도 억제하지 않는다(false positive 방지).
+
+    NOTE: isMeta 게이트는 쓰지 않는다 — 실측상 wake 엔트리에 isMeta 키가 없어,
+    예전 `isMeta:true` 가정 기반 가드는 이 함수가 항상 False 를 반환해 wake Stop
+    을 못 잡았다(직전 turn 토큰 재표시 버그). content substring 으로 판정한다.
     """
     for e in reversed(entries):
         if e.get("type") != "user":
             continue
-        if not e.get("isMeta"):
-            return False  # 최근 user 엔트리가 진짜 프롬프트 → 정상 표시
         msg = e.get("message") or {}
         content = msg.get("content")
         text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-        return "[cn:keepalive" in text
+        return "[cn:keepalive" in text and "Stop hook blocking error" in text
     return False
 
 
