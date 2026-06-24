@@ -121,10 +121,11 @@ def _detect_terminal_width() -> int | None:
     return None
 
 
-# Flex columns that absorb leftover budget — the two free-text columns whose
-# content length is unbounded (model labels grow with subagent rows; tools
-# lists grow with busy turns). Numeric columns stay content-sized.
-_FLEX_COL_INDICES = (_MODEL_COL_INDEX, _TOOLS_COL_INDEX)
+# Flex column that absorbs leftover budget. Only tools — the model column now
+# holds short labels (`opus 4.8` / `└ sub: opus 4.8`) since agent_type moved to
+# the tools cell, so widening model would just add dead padding. Giving all the
+# slack to tools means wider tool cells → fewer wrapped lines.
+_FLEX_COL_INDICES = (_TOOLS_COL_INDEX,)
 
 
 def _grow_flex_to_fill(widths: list[int], target: int) -> list[int]:
@@ -307,25 +308,66 @@ def _short_tool_name(name: str) -> str:
 
     MCP tools arrive as `mcp__{server}__{tool}` (e.g.
     `mcp__claude_ai_Notion__notion-fetch`) which is far too wide for the
-    column. Keep only the final `{tool}` segment (`notion-fetch`). Non-MCP
+    column. Keep only the final `{tool}` segment and tag it with an `mcp:`
+    prefix so it still reads as an MCP call (`mcp:notion-fetch`). Non-MCP
     names pass through unchanged.
     """
     if name.startswith("mcp__"):
         parts = name.split("__")
         if len(parts) >= 3 and parts[-1]:
-            return parts[-1]
+            return f"mcp:{parts[-1]}"
     return name
 
 
-def _format_tools(tools: list[dict]) -> str:
-    if not tools:
+def _tool_strs(tools: list[dict]) -> list[str]:
+    """`[{"name","count"}]` → `["Read×3", "mcp:notion-fetch×2", ...]`."""
+    return [f"{_short_tool_name(t['name'])}×{t['count']}" for t in tools]
+
+
+def _wrap_tokens(tokens: list[str], width: int) -> list[str]:
+    """Greedy comma-pack `tokens` into lines no wider than `width`.
+
+    A single token wider than `width` gets its own line (rendered padded/
+    truncated by `_pad` later). Never breaks inside a token."""
+    lines: list[str] = []
+    cur = ""
+    for tok in tokens:
+        cand = tok if not cur else f"{cur},{tok}"
+        if cur and visual_width(cand) > width:
+            lines.append(cur)
+            cur = tok
+        else:
+            cur = cand
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _tool_cell_lines(agent_type: str | None, tool_strs: list[str], width: int) -> list[str]:
+    """Physical lines for a row's tools cell.
+
+    Subagent rows (agent_type set) lead with the agent_type on its own line,
+    then the wrapped tool list (or "—" when the sub used no tools). Parent rows
+    (agent_type None) are just the wrapped tool list, or "—" when empty."""
+    lines: list[str] = []
+    if agent_type:
+        lines.append(agent_type)
+    if tool_strs:
+        lines.extend(_wrap_tokens(tool_strs, width))
+    else:
+        lines.append("—")
+    return lines
+
+
+def _tool_atom(agent_type: str | None, tool_strs: list[str]) -> str:
+    """Widest unbreakable atom in a tools cell — used to size the column so no
+    single token (or the agent_type header) is ever truncated when wrapping."""
+    atoms = list(tool_strs)
+    if agent_type:
+        atoms.append(agent_type)
+    if not atoms:
         return "—"
-    rendered = [f"{_short_tool_name(t['name'])}×{t['count']}" for t in tools]
-    if len(rendered) <= 3:
-        return ",".join(rendered)
-    shown = rendered[:3]
-    remainder = len(rendered) - 3
-    return ",".join(shown) + f",...+{remainder}"
+    return max(atoms, key=visual_width)
 
 
 def _turn_time(turn: TurnUsage, next_turn: TurnUsage | None,
@@ -345,20 +387,13 @@ def _turn_time(turn: TurnUsage, next_turn: TurnUsage | None,
 
 
 def _sub_label(sub: SubagentUsage, prefix: str) -> str:
-    """Render the sub row's model-column label.
+    """Render the sub row's model-column label: `{prefix}sub: {short_model}`.
 
-    Format:
-        - model known: "{prefix}sub: {agent_type} [{short_model}]"
-        - model unknown: "{prefix}sub: {agent_type}"  (no brackets)
-
-    Brackets are dropped when model is empty so the row visibly signals
-    "this is the parent-model fallback" instead of showing "[]".
-    """
-    name = sub.agent_type if sub.agent_type else "(unknown)"
+    The model column carries only the sub's model now — the agent_type moved
+    into the tools column (rendered as the cell's first line). When the model
+    is unknown, show `?` so the row still signals the parent-model fallback."""
     short = _short_model_name(getattr(sub, "model", ""))
-    if short:
-        return f"{prefix}{_SUB_LABEL} {name} [{short}]"
-    return f"{prefix}{_SUB_LABEL} {name}"
+    return f"{prefix}{_SUB_LABEL} {short if short else '?'}"
 
 
 def _sub_time_str(sub: SubagentUsage) -> str:
@@ -378,8 +413,12 @@ def format_detail(summary: Summary, language: str) -> str:
     header_cells = [s[c.key] for c in columns]
 
     # Pass 1: build every row's raw (unpadded) cells so column widths can be
-    # sized to actual content, then fit to the one-line budget.
+    # sized to actual content, then fit to the one-line budget. The tools cell
+    # in `body_rows` holds the widest *atom* (longest single token / agent_type)
+    # for sizing; `row_meta` carries the data to wrap into physical lines at
+    # render time once the final tools-column width is known.
     body_rows: list[list[str]] = []
+    row_meta: list[tuple[str | None, list[str]]] = []  # (agent_type|None, tool_strs)
     prior_sum = 0.0
     has_subagents = False
     has_unknown_sub_model = False
@@ -391,10 +430,11 @@ def format_detail(summary: Summary, language: str) -> str:
             prior_sum += t_sec
 
         cost = f"${compute_cost(turn.model, turn):.4f}"
+        p_tool_strs = _tool_strs(turn.tools_used)
         body_rows.append([
             str(turn.index + 1),
             _short_model_name(turn.model),
-            _format_tools(turn.tools_used),
+            _tool_atom(None, p_tool_strs),
             _fmt_compact_number(turn.input_tokens),
             _fmt_cc(turn.cache_creation_5m_tokens + turn.cache_creation_1h_tokens),
             _fmt_compact_number(turn.cache_read_tokens),
@@ -402,6 +442,7 @@ def format_detail(summary: Summary, language: str) -> str:
             cost,
             t_str,
         ])
+        row_meta.append((None, p_tool_strs))
 
         # Child rows for subagents under this parent turn.
         for sub in turn.subagents:
@@ -415,10 +456,12 @@ def format_detail(summary: Summary, language: str) -> str:
             # Cost: same fallback rule as aggregator (single helper).
             billing_model = effective_billing_model(sub_model, turn.model)
             sub_cost = f"${compute_cost(billing_model, sub):.4f}"
+            agent_type = sub.agent_type if sub.agent_type else "(unknown)"
+            s_tool_strs = _tool_strs(getattr(sub, "tools_used", []))
             body_rows.append([
                 "",  # # column blank for child rows
                 _sub_label(sub, sub_prefix),
-                _format_tools(getattr(sub, "tools_used", [])),
+                _tool_atom(agent_type, s_tool_strs),
                 _fmt_compact_number(sub.input_tokens),
                 _fmt_cc(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens),
                 _fmt_compact_number(sub.cache_read_tokens),
@@ -426,6 +469,7 @@ def format_detail(summary: Summary, language: str) -> str:
                 sub_cost,
                 _sub_time_str(sub),
             ])
+            row_meta.append((agent_type, s_tool_strs))
 
     # Pass 2: size columns to content. If the real terminal width is known,
     # target it (shrink if over, stretch gaps to fill if under) so the table
@@ -461,10 +505,24 @@ def format_detail(summary: Summary, language: str) -> str:
         out = padded[0] if padded else ""
         for i in range(1, len(padded)):
             out += " " * gaps[i - 1] + padded[i]
-        return out
+        return out.rstrip()
 
     col_header_row = _render(header_cells)
-    rows = [_render(c) for c in body_rows]
+
+    # Each logical row → 1+ physical lines: the first line carries every column
+    # (numbers, model, and the tools cell's first line); the tools list wraps
+    # onto continuation lines that fill only the tools column.
+    tools_w = widths[_TOOLS_COL_INDEX]
+    rows: list[str] = []
+    for cells, (agent_type, tool_strs) in zip(body_rows, row_meta):
+        tlines = _tool_cell_lines(agent_type, tool_strs, tools_w)
+        first = list(cells)
+        first[_TOOLS_COL_INDEX] = tlines[0]
+        rows.append(_render(first))
+        for extra in tlines[1:]:
+            cont = [""] * len(columns)
+            cont[_TOOLS_COL_INDEX] = extra
+            rows.append(_render(cont))
 
     row_width = visual_width(col_header_row)
     rule_width = max(row_width, visual_width(s["header_title"]))
