@@ -236,8 +236,9 @@ def test_detail_table_alignment_with_subagent_rows():
 # ---------------------------------------------------------------------------
 
 
-def test_subagent_row_shows_model_in_brackets():
+def test_subagent_row_shows_model_in_brackets(monkeypatch):
     """sub.model이 채워진 경우 행 라벨이 'sub: {agent_type} [{short}]' 형식이어야 한다."""
+    monkeypatch.setenv("COLUMNS", "140")  # 라벨이 다 들어갈 만큼 넓은 터미널 가정
     turn = _turn()
     turn.subagents = [_sub(agent_type="general-purpose")]
     turn.subagents[0].model = "claude-sonnet-4-6"
@@ -507,3 +508,80 @@ def test_model_column_grows_for_long_subagent_label_on_wide_terminal(monkeypatch
     # 긴 agent_type 가 잘리지 않고 (… 없이) 그대로 렌더된다.
     assert long_type in out
     assert "..." not in out
+
+
+def test_numeric_columns_have_minimum_width():
+    """숫자 컬럼(input~시간)은 짧은 값이라도 _NUM_MIN_WIDTH 이상 폭을 갖는다
+    (예산 여유 시). floor 는 _apply_num_floor 가 부여한다."""
+    from lib.detail_formatter import (
+        _NUM_COL_INDICES, _NUM_MIN_WIDTH, _apply_num_floor, _compute_widths,
+    )
+    # 모든 셀이 1글자인 행 — floor 없으면 숫자 컬럼이 1~2칸으로 쪼그라든다.
+    header = ["#", "m", "t", "in", "cc", "cr", "out", "$", "T"]
+    rows = [["1", "x", "y", "2", "4", "7", "3", "1", "5"]]
+    content = _compute_widths(header, rows)
+    # _compute_widths 자체는 floor 미적용 (순수 content)
+    assert content[_NUM_COL_INDICES[0]] < _NUM_MIN_WIDTH
+    widths = _apply_num_floor(content)
+    for ci in _NUM_COL_INDICES:
+        assert widths[ci] >= _NUM_MIN_WIDTH
+
+
+def test_narrow_terminal_reclaims_numeric_floor_without_truncating(monkeypatch):
+    """아주 좁은 터미널에선 숫자 floor 패딩을 반납해 줄바꿈을 피하되, 숫자 값
+    자체는 안 잘린다 (한 줄 유지)."""
+    monkeypatch.setenv("COLUMNS", "60")
+    turn = _turn(
+        model="claude-opus-4-8", input_tokens=7610, output_tokens=322,
+        cache_creation_5m_tokens=174, cache_read_tokens=99810,
+        tools_used=[{"name": "mcp__claude_ai_Notion__notion-search", "count": 1}],
+    )
+    out = format_detail(_summary([turn]), "ko")
+    rows = [l for l in out.splitlines() if l.strip().startswith("1 ")]
+    assert rows, "data row missing"
+    row = rows[0]
+    # 숫자 값은 온전히 보존
+    for v in ("7,610", "99.81K", "322"):
+        assert v in row
+    # 한 줄 폭이 터미널(60)을 넘지 않음 — 줄바꿈 방지
+    assert visual_width(row) <= 60
+
+
+# ---------------------------------------------------------------------------
+# subagent tools column: real names, MCP shortening, em-dash when empty
+# ---------------------------------------------------------------------------
+
+
+def test_short_tool_name_shortens_mcp():
+    from lib.detail_formatter import _short_tool_name
+    assert _short_tool_name("mcp__claude_ai_Notion__notion-fetch") == "notion-fetch"
+    assert _short_tool_name("mcp__plugin_pw_pw__browser_click") == "browser_click"
+    assert _short_tool_name("Bash") == "Bash"
+    assert _short_tool_name("mcp__weird") == "mcp__weird"  # too few segments
+
+
+def test_subagent_row_renders_tools_with_mcp_shortened(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    turn = _turn(model="claude-opus-4-8", tools_used=[{"name": "Agent", "count": 1}])
+    sub = _sub(agent_type="general-purpose", model="claude-haiku-4-5-20251001")
+    sub.tools_used = [
+        {"name": "mcp__claude_ai_Notion__notion-fetch", "count": 12},
+        {"name": "Bash", "count": 1},
+    ]
+    turn.subagents = [sub]
+    out = format_detail(_summary([turn]), "ko")
+    child = next(l for l in out.splitlines() if "└" in l)
+    assert "notion-fetch×12" in child
+    assert "Bash×1" in child
+    assert "mcp__" not in child  # full MCP id never shown
+
+
+def test_subagent_row_shows_dash_when_no_tools(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
+    turn = _turn(model="claude-opus-4-8", tools_used=[{"name": "Agent", "count": 1}])
+    sub = _sub(agent_type="Explore", model="claude-opus-4-8")
+    sub.tools_used = []
+    turn.subagents = [sub]
+    out = format_detail(_summary([turn]), "ko")
+    child = next(l for l in out.splitlines() if "└" in l)
+    assert "—" in child

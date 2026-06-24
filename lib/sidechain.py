@@ -342,7 +342,75 @@ def collect_sidechain_subagents(
                         # input.model only when sidechain didn't expose one.
                         if not sub.model and fallback_model:
                             sub.model = fallback_model
+                        sub.agent_id = agent_id
                         out.append(sub)
         except OSError:
             continue
     return out
+
+
+def collect_sub_tool_names(
+    sidechain_dir: Path | str, agent_id: str
+) -> list[dict]:
+    """Real per-tool usage for one subagent from its sidechain transcript.
+
+    Reads `{sidechain_dir}/agent-{agent_id}.jsonl` and counts every
+    `tool_use` block's name across all assistant lines, returning
+    [{"name": str, "count": int}] ordered by first appearance. This recovers
+    exact tool names — including MCP tools like
+    `mcp__claude_ai_Notion__notion-fetch` — which `toolStats` buckets lose.
+
+    Both foreground and async subs write this transcript. Returns an empty
+    list when the file is missing/unreadable, so callers keep their fallback
+    (bucketed toolStats). Applies the same path-safety guards as
+    `collect_sidechain_subagents`."""
+    if not isinstance(sidechain_dir, Path):
+        sidechain_dir = Path(sidechain_dir)
+    if not _is_safe_agent_id(agent_id):
+        return []
+    try:
+        sidechain_resolved = sidechain_dir.resolve()
+    except (OSError, ValueError):
+        return []
+    path = sidechain_dir / f"agent-{agent_id}.jsonl"
+    if not path.is_file() or path.is_symlink():
+        return []
+    try:
+        if not path.resolve().is_relative_to(sidechain_resolved):
+            return []
+    except (OSError, ValueError):
+        return []
+
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = entry.get("message") if isinstance(entry, dict) else None
+                if not isinstance(msg, dict):
+                    continue
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") != "tool_use":
+                        continue
+                    name = block.get("name")
+                    if not isinstance(name, str) or not name:
+                        continue
+                    if name not in counts:
+                        counts[name] = 0
+                        order.append(name)
+                    counts[name] += 1
+    except OSError:
+        return []
+    return [{"name": n, "count": counts[n]} for n in order]

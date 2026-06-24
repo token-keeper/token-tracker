@@ -1007,3 +1007,66 @@ def test_parse_line_prefers_nested_cc_when_both_present():
     assert t.cache_creation_5m_tokens == 1000
     assert t.cache_creation_1h_tokens == 2000
     assert (t.cache_creation_5m_tokens + t.cache_creation_1h_tokens) == 3000
+
+
+# ---------------------------------------------------------------------------
+# foreground sub: resolvedModel / agentId / toolStats buckets
+# ---------------------------------------------------------------------------
+
+
+def _completed_agent_entry(**tur_overrides):
+    tur = {
+        "agentType": "general-purpose",
+        "status": "completed",
+        "agentId": "ag123",
+        "resolvedModel": "claude-haiku-4-5-20251001",
+        "totalDurationMs": 1000,
+        "toolStats": {
+            "readCount": 3, "searchCount": 0, "bashCount": 1,
+            "editFileCount": 0, "otherToolCount": 2,
+        },
+        "usage": {"input_tokens": 4, "output_tokens": 8},
+    }
+    tur.update(tur_overrides)
+    return {
+        "type": "user",
+        "toolUseResult": tur,
+        "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "tu_x", "content": "ok"}
+        ]},
+    }
+
+
+def test_fg_sub_model_from_resolved_model():
+    from lib.parser import parse_tool_result_for_agent
+    s = parse_tool_result_for_agent(_completed_agent_entry())
+    assert s is not None
+    assert s.model == "claude-haiku-4-5-20251001"
+    assert s.agent_id == "ag123"
+
+
+def test_fg_sub_tools_from_tool_stats_buckets():
+    from lib.parser import parse_tool_result_for_agent
+    s = parse_tool_result_for_agent(_completed_agent_entry())
+    # readCount=3, bashCount=1, otherToolCount=2 → Read/Bash/기타, zero buckets skipped
+    names = {t["name"]: t["count"] for t in s.tools_used}
+    assert names == {"Read": 3, "Bash": 1, "기타": 2}
+
+
+def test_fg_sub_tools_empty_when_no_tool_stats():
+    from lib.parser import parse_tool_result_for_agent
+    s = parse_tool_result_for_agent(_completed_agent_entry(toolStats=None))
+    assert s.tools_used == []
+
+
+def test_tools_from_tool_stats_orders_and_skips_zero():
+    from lib.parser import _tools_from_tool_stats
+    out = _tools_from_tool_stats({
+        "bashCount": 2, "readCount": 1, "otherToolCount": 0, "editFileCount": 5,
+    })
+    # order follows _TOOL_STAT_BUCKETS: Read, Edit, Bash (otherToolCount=0 skipped)
+    assert out == [
+        {"name": "Read", "count": 1},
+        {"name": "Edit", "count": 5},
+        {"name": "Bash", "count": 2},
+    ]

@@ -1097,3 +1097,54 @@ def test_count_active_from_file_with_queue_operation_completions(tmp_path):
     _write_jsonl(transcript, entries)
 
     assert sidechain.count_active_async_agents_from_file(str(transcript)) == 0
+
+
+# ---------------------------------------------------------------------------
+# collect_sub_tool_names — real per-tool names from a sub's sidechain jsonl
+# ---------------------------------------------------------------------------
+
+
+def _write_agent_jsonl(sub_dir, agent_id, tool_names):
+    import json
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    path = sub_dir / f"agent-{agent_id}.jsonl"
+    with path.open("w", encoding="utf-8") as f:
+        for n in tool_names:
+            line = {
+                "isSidechain": True,
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "name": n, "input": {}}]},
+            }
+            f.write(json.dumps(line) + "\n")
+    return path
+
+
+def test_collect_sub_tool_names_counts_real_names_incl_mcp(tmp_path):
+    from lib.sidechain import collect_sub_tool_names
+    sub_dir = tmp_path / "sess" / "subagents"
+    _write_agent_jsonl(sub_dir, "ag1", [
+        "Bash", "Read", "Read",
+        "mcp__claude_ai_Notion__notion-fetch",
+        "mcp__claude_ai_Notion__notion-fetch",
+    ])
+    out = collect_sub_tool_names(sub_dir, "ag1")
+    # ordered by first appearance, counted
+    assert out == [
+        {"name": "Bash", "count": 1},
+        {"name": "Read", "count": 2},
+        {"name": "mcp__claude_ai_Notion__notion-fetch", "count": 2},
+    ]
+
+
+def test_collect_sub_tool_names_missing_file_returns_empty(tmp_path):
+    from lib.sidechain import collect_sub_tool_names
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+    assert collect_sub_tool_names(sub_dir, "nope") == []
+
+
+def test_collect_sub_tool_names_rejects_unsafe_agent_id(tmp_path):
+    from lib.sidechain import collect_sub_tool_names
+    sub_dir = tmp_path / "sess" / "subagents"
+    sub_dir.mkdir(parents=True)
+    assert collect_sub_tool_names(sub_dir, "../evil") == []

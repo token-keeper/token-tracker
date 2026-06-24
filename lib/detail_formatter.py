@@ -70,6 +70,13 @@ _TOOLS_COL_MAX_WIDTH = 28  # cap tools list so one busy turn can't blow up width
 # them tight. Only the two free-text columns can grow unbounded.
 _COL_CAPS = {_MODEL_COL_INDEX: _MODEL_COL_MAX_WIDTH, _TOOLS_COL_INDEX: _TOOLS_COL_MAX_WIDTH}
 
+# Numeric columns (input, cc, cr, output, cost, time). Index (#) and the two
+# free-text columns are excluded.
+_NUM_COL_INDICES = (3, 4, 5, 6, 7, 8)
+# Minimum visible width for a numeric column, so short values ("2", "747") and
+# narrow headers (cc/cr) still get a roomy cell instead of crowding together.
+_NUM_MIN_WIDTH = 8
+
 # Fallback one-line width used only when the real terminal width can't be
 # detected (see `_detect_terminal_width`). Sized to fit common terminals once
 # Claude Code's left gutter is accounted for.
@@ -179,12 +186,29 @@ def _compute_widths(
     return widths
 
 
-def _fit_to_budget(widths: list[int], header_cells: list[str], budget: int) -> list[int]:
-    """Shrink flexible columns (tools, then model) until the table fits
-    `budget`. Floors keep the header label readable and leave room for a
-    truncation marker. Numeric columns are never shrunk — cutting them would
-    corrupt the displayed values. If even the floors overflow, accept it (no
-    safe further reduction exists)."""
+def _apply_num_floor(widths: list[int]) -> list[int]:
+    """Bump numeric columns up to `_NUM_MIN_WIDTH` so short numbers get a roomy
+    cell. This is a *preferred* width — `_fit_to_budget` may reclaim the padding
+    (down to the original content width) when the terminal is too narrow."""
+    return [
+        max(w, _NUM_MIN_WIDTH) if ci in _NUM_COL_INDICES else w
+        for ci, w in enumerate(widths)
+    ]
+
+
+def _fit_to_budget(
+    widths: list[int],
+    header_cells: list[str],
+    budget: int,
+    min_widths: list[int] | None = None,
+) -> list[int]:
+    """Shrink columns until the table fits `budget`.
+
+    Order of reclamation: flexible text columns first (tools, then model) down
+    to a header/marker floor, then — only if still over — the numeric columns'
+    *padding*, reclaimed down to `min_widths` (their floor-free content width)
+    so the displayed numbers themselves are never truncated. If everything is
+    at its floor and it still overflows, accept it (no safe reduction left)."""
     def total() -> int:
         return sum(widths) + _GAP * (len(widths) - 1) + 1  # +1 leading space
 
@@ -196,6 +220,18 @@ def _fit_to_budget(widths: list[int], header_cells: list[str], budget: int) -> l
         cut = min(over, widths[ci] - floor)
         if cut > 0:
             widths[ci] -= cut
+
+    # Reclaim numeric floor padding only when the flexible columns weren't
+    # enough. Never cut below the column's content width (min_widths), so the
+    # numbers stay intact — we only give back the roomy `_NUM_MIN_WIDTH` extra.
+    if min_widths is not None:
+        for ci in _NUM_COL_INDICES:
+            over = total() - budget
+            if over <= 0:
+                break
+            cut = min(over, widths[ci] - min_widths[ci])
+            if cut > 0:
+                widths[ci] -= cut
     return widths
 
 
@@ -266,10 +302,25 @@ def _fmt_cc(n: int) -> str:
     return _fmt_compact_number(n, low_threshold=True)
 
 
+def _short_tool_name(name: str) -> str:
+    """Compact display name for a tool.
+
+    MCP tools arrive as `mcp__{server}__{tool}` (e.g.
+    `mcp__claude_ai_Notion__notion-fetch`) which is far too wide for the
+    column. Keep only the final `{tool}` segment (`notion-fetch`). Non-MCP
+    names pass through unchanged.
+    """
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        if len(parts) >= 3 and parts[-1]:
+            return parts[-1]
+    return name
+
+
 def _format_tools(tools: list[dict]) -> str:
     if not tools:
         return "—"
-    rendered = [f"{t['name']}×{t['count']}" for t in tools]
+    rendered = [f"{_short_tool_name(t['name'])}×{t['count']}" for t in tools]
     if len(rendered) <= 3:
         return ",".join(rendered)
     shown = rendered[:3]
@@ -367,7 +418,7 @@ def format_detail(summary: Summary, language: str) -> str:
             body_rows.append([
                 "",  # # column blank for child rows
                 _sub_label(sub, sub_prefix),
-                "",  # tools column blank for child rows (T6 future)
+                _format_tools(getattr(sub, "tools_used", [])),
                 _fmt_compact_number(sub.input_tokens),
                 _fmt_cc(sub.cache_creation_5m_tokens + sub.cache_creation_1h_tokens),
                 _fmt_compact_number(sub.cache_read_tokens),
@@ -380,20 +431,27 @@ def format_detail(summary: Summary, language: str) -> str:
     # target it (shrink if over, stretch gaps to fill if under) so the table
     # spans the full width edge-to-edge. Otherwise fall back to a fixed budget
     # and never stretch (a wrong guess would wrap).
+    # `content` = floor-free widths (the hard minimum a numeric column may
+    # shrink to). `min_widths=content` lets `_fit_to_budget` reclaim the roomy
+    # numeric floor padding on narrow terminals without ever truncating numbers.
     term_width = _detect_terminal_width()
     if term_width is not None:
         # Fill the detected width (minus gutter), but cap so an ultrawide
         # terminal doesn't scatter columns across the whole screen. Size flex
-        # columns to full content (no caps), shrink to fit if over, then split
-        # any leftover between model + tools so both grow dynamically.
-        widths = _compute_widths(header_cells, body_rows)
+        # columns to full content (no caps), apply the numeric floor, shrink to
+        # fit if over, then split any leftover between model + tools.
+        content = _compute_widths(header_cells, body_rows)
+        widths = _apply_num_floor(content)
         target = min(term_width - _RENDER_MARGIN, _MAX_TABLE_WIDTH)
-        widths = _fit_to_budget(widths, header_cells, budget=target)
+        widths = _fit_to_budget(widths, header_cells, budget=target, min_widths=content)
         widths = _grow_flex_to_fill(widths, target)
         gaps = [_GAP] * (len(widths) - 1)
     else:
-        widths = _compute_widths(header_cells, body_rows, caps=_COL_CAPS)
-        widths = _fit_to_budget(widths, header_cells, budget=_WIDTH_BUDGET)
+        content = _compute_widths(header_cells, body_rows, caps=_COL_CAPS)
+        widths = _apply_num_floor(content)
+        widths = _fit_to_budget(
+            widths, header_cells, budget=_WIDTH_BUDGET, min_widths=content
+        )
         gaps = [_GAP] * (len(widths) - 1)
 
     def _render(cells: list[str]) -> str:

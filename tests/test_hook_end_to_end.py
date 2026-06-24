@@ -2293,3 +2293,88 @@ def test_on_stop_history_failure_does_not_break_last_summary(tmp_path, monkeypat
     from lib.summary_store import load_last_summary
     summ = load_last_summary("s_fail")
     assert summ is not None
+
+
+def test_async_subagent_tools_attributed_to_one_row_only(tmp_path):
+    """async sub 은 assistant 라인마다 행이 생기는데(여러 행), agent 전체 툴
+    리스트는 첫 행에만 붙고 나머지 행은 '—' 여야 한다 (중복 방지). F2 회귀 가드."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    session_stem = "sess-f2"
+    session_path = tmp_path / f"{session_stem}.jsonl"
+    sidechain_dir = tmp_path / session_stem / "subagents"
+    sidechain_dir.mkdir(parents=True)
+
+    user_line = {
+        "type": "user", "uuid": "u1", "timestamp": "2026-04-23T10:00:00.000Z",
+        "message": {"role": "user", "content": "go"},
+    }
+    main_rest = [
+        {
+            "type": "assistant", "uuid": "a1", "timestamp": "2026-04-23T10:00:01.000Z",
+            "message": {
+                "id": "msg1", "role": "assistant", "model": "claude-opus-4-7",
+                "content": [{"type": "tool_use", "id": "tu_a", "name": "Agent",
+                             "input": {"subagent_type": "general-purpose"}}],
+                "usage": {"input_tokens": 50, "output_tokens": 10,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            },
+        },
+        {
+            "type": "user", "uuid": "u2", "timestamp": "2026-04-23T10:00:02.000Z",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu_a", "content": "launched"}]},
+            "toolUseResult": {"agentType": "general-purpose",
+                              "agentId": "agent-f2-1", "status": "async_launched"},
+        },
+        {
+            "type": "user", "uuid": "u3", "timestamp": "2026-04-23T10:00:05.000Z",
+            "message": {"role": "user", "content": (
+                "<task-notification><task-id>agent-f2-1</task-id>"
+                "<status>completed</status></task-notification>")},
+        },
+    ]
+    with session_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(user_line) + "\n")
+
+    # sidechain: TWO assistant lines (→ two sub rows), each with a tool_use.
+    side_lines = [
+        {"type": "assistant", "timestamp": "2026-04-23T10:00:03.000Z",
+         "message": {"id": "ms1", "role": "assistant", "model": "claude-haiku-4-5",
+                     "content": [{"type": "tool_use", "id": "x1", "name": "Bash", "input": {}}],
+                     "usage": {"input_tokens": 500, "output_tokens": 100,
+                               "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}},
+        {"type": "assistant", "timestamp": "2026-04-23T10:00:04.000Z",
+         "message": {"id": "ms2", "role": "assistant", "model": "claude-haiku-4-5",
+                     "content": [{"type": "tool_use", "id": "x2", "name": "Read", "input": {}}],
+                     "usage": {"input_tokens": 500, "output_tokens": 100,
+                               "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}},
+    ]
+    with (sidechain_dir / "agent-agent-f2-1.jsonl").open("w", encoding="utf-8") as f:
+        for ln in side_lines:
+            f.write(json.dumps(ln) + "\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    env["CLAUDE_PLUGIN_ROOT"] = str(REPO)
+    env["TOKEN_TRACKER_VERBOSE"] = "1"
+    env["COLUMNS"] = "200"  # wide so the tools cell isn't truncated
+
+    payload = {"session_id": "e2e-f2", "transcript_path": str(session_path),
+               "cwd": str(tmp_path), "hook_event_name": "UserPromptSubmit"}
+    assert _run("on_user_prompt.py", payload, env).returncode == 0
+    with session_path.open("a", encoding="utf-8") as f:
+        for ln in main_rest:
+            f.write(json.dumps(ln) + "\n")
+
+    payload["hook_event_name"] = "Stop"
+    r = _run("on_stop.py", payload, env)
+    assert r.returncode == 0, r.stderr
+    msg = json.loads(r.stdout)["systemMessage"]
+    sub_rows = [l for l in msg.splitlines() if "└" in l]
+    assert len(sub_rows) == 2, f"expected 2 async sub rows, got: {sub_rows}"
+    # Tools appear on exactly one row; the other shows the em-dash.
+    joined = "\n".join(sub_rows)
+    assert "Bash×1" in joined and "Read×1" in joined
+    assert sum(("Bash×1" in row) for row in sub_rows) == 1
+    assert any("—" in row for row in sub_rows)

@@ -351,3 +351,30 @@ def test_load_v3_round_trips_multiple_subagents_per_turn(monkeypatch, tmp_path):
     assert {s.input_tokens for s in subs} == {1, 2}
     for s in subs:
         assert isinstance(s, SubagentUsage)
+
+
+def test_save_load_roundtrip_preserves_subagent_tools_and_agent_id(monkeypatch, tmp_path):
+    """sub 의 tools_used / agent_id 가 persist → load 후에도 보존된다 (회귀 가드)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    turn = TurnUsage(
+        model="claude-opus-4-8",
+        input_tokens=1, output_tokens=1,
+        cache_creation_5m_tokens=0, cache_creation_1h_tokens=0,
+        cache_read_tokens=0, tools_used=[], timestamp_iso="", message_id="m1",
+        index=0,
+    )
+    turn.subagents = [SubagentUsage(
+        agent_type="general-purpose", tool_use_id="tu1",
+        input_tokens=4, output_tokens=8, model="claude-haiku-4-5-20251001",
+        agent_id="ag-xyz",
+        tools_used=[{"name": "mcp__claude_ai_Notion__notion-fetch", "count": 3}],
+    )]
+    summary = Summary(
+        total_cost=0.0, total_input_tokens=1, total_output_tokens=1,
+        cache_hit_rate=0.0, total_elapsed=1.0, turns=[turn],
+    )
+    summary_store.save_last_summary("sess-sub", summary)
+    loaded = summary_store.load_last_summary("sess-sub")
+    sub = loaded.turns[0].subagents[0]
+    assert sub.agent_id == "ag-xyz"
+    assert sub.tools_used == [{"name": "mcp__claude_ai_Notion__notion-fetch", "count": 3}]
