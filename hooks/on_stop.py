@@ -192,10 +192,18 @@ def main() -> int:
         # real tool names (incl MCP) recorded in its sidechain transcript.
         # Every sub (fg + async) writes `{session}/subagents/agent-{id}.jsonl`.
         # Missing/unreadable file → keep the bucket fallback.
+        #
+        # Async agents emit one SubagentUsage row per assistant line, all
+        # sharing an agent_id; collect_sub_tool_names returns the agent-wide
+        # tool list, so attribute it to the FIRST row only — otherwise every
+        # row would repeat the same tools. (Foreground subs are 1 row/agent,
+        # so this is a no-op for them.)
         if sidechain_dir is not None:
+            enriched_agents: set[str] = set()
             for s in fg_subs + async_subs:
-                if not s.agent_id:
+                if not s.agent_id or s.agent_id in enriched_agents:
                     continue
+                enriched_agents.add(s.agent_id)
                 real_tools = collect_sub_tool_names(sidechain_dir, s.agent_id)
                 if real_tools:
                     s.tools_used = real_tools
